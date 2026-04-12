@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signal-to-Sleep</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/themes/dark.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f1117; --surface: #1a1d27; --surface2: #232735;
+            --border: #2a2e3d; --text: #e4e6f0; --text-dim: #8b8fa3;
+            --accent: #7c6ef0; --accent-glow: rgba(124,110,240,0.15);
+            --deep: #4f46e5; --rem: #a78bfa; --light: #60a5fa;
+            --awake: #f87171; --green: #34d399; --yellow: #fbbf24; --red: #f87171;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+
+        /* Header */
+        .header { padding:24px 32px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+        .header h1 { font-size:20px; font-weight:600; letter-spacing:-0.3px; }
+        .header h1 span { color:var(--accent); }
+        .header-right { display:flex; align-items:center; gap:16px; }
+        .health-badges { display:flex; gap:8px; }
+        .badge { display:flex; align-items:center; gap:5px; font-size:11px; padding:4px 10px; border-radius:20px; border:1px solid var(--border); background:var(--surface); text-transform:uppercase; letter-spacing:0.5px; }
+        .badge .dot { width:6px; height:6px; border-radius:50%; background:var(--red); transition:background 0.3s; }
+        .badge .dot.up { background:var(--green); }
+        .badge.ok { border-color:rgba(52,211,153,0.3); }
+        .mqtt-line { font-size:12px; color:var(--text-dim); display:flex; gap:12px; }
+        .mqtt-line code { background:var(--surface2); padding:2px 6px; border-radius:4px; font-size:11px; color:var(--accent); }
+        .mqtt-line .ct { color:var(--text); font-weight:500; }
+
+        .container { max-width:1200px; margin:0 auto; padding:24px 32px; }
+
+        /* Time picker bar */
+        .time-bar { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:12px 16px; margin-bottom:20px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .presets { display:flex; gap:3px; flex-wrap:wrap; }
+        .presets button { font-size:11px; padding:4px 9px; border-radius:5px; background:transparent; border:1px solid var(--border); color:var(--text-dim); cursor:pointer; transition:all 0.15s; font-family:inherit; }
+        .presets button:hover { border-color:var(--accent); color:var(--text); }
+        .presets button.active { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:500; }
+        .sep { width:1px; height:24px; background:var(--border); margin:0 4px; }
+        .custom-wrap { display:flex; align-items:center; gap:8px; }
+        .custom-wrap label { font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; }
+        .custom-wrap input { font-family:inherit; font-size:12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px 10px; width:230px; cursor:pointer; }
+        .custom-wrap input:hover,.custom-wrap input:focus { border-color:var(--accent); outline:none; }
+        .range-lbl { font-size:12px; color:var(--text-dim); margin-left:auto; }
+        .range-lbl strong { color:var(--text); font-weight:500; }
+
+        /* flatpickr dark overrides */
+        .flatpickr-calendar { background:var(--surface)!important; border-color:var(--border)!important; box-shadow:0 8px 32px rgba(0,0,0,0.5)!important; font-family:inherit!important; }
+        .flatpickr-day.selected,.flatpickr-day.startRange,.flatpickr-day.endRange { background:var(--accent)!important; border-color:var(--accent)!important; }
+        .flatpickr-day.inRange { background:var(--accent-glow)!important; border-color:transparent!important; box-shadow:none!important; }
+        .flatpickr-day:hover { background:var(--surface2)!important; border-color:var(--accent)!important; }
+
+        /* Sleep periods header + cards */
+        .periods-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+        .periods-header h2 { font-size:14px; font-weight:500; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; }
+        .periods-header .selected-count { font-size:12px; color:var(--text-dim); margin-left:8px; font-weight:400; text-transform:none; letter-spacing:0; }
+        .select-all-btn { font-family:inherit; font-size:11px; padding:5px 12px; border-radius:6px; background:transparent; border:1px solid var(--border); color:var(--text-dim); cursor:pointer; transition:all 0.15s; }
+        .select-all-btn:hover { border-color:var(--accent); color:var(--text); }
+        .periods-list { display:flex; flex-direction:column; gap:6px; margin-bottom:24px; }
+        .period-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 16px; display:flex; align-items:center; gap:14px; cursor:pointer; transition:all 0.15s; user-select:none; }
+        .period-card:hover { border-color:var(--accent); }
+        .period-card.selected { border-color:var(--accent); background:var(--accent-glow); }
+        .period-check { width:18px; height:18px; border-radius:4px; border:2px solid var(--border); display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:all 0.15s; }
+        .period-card.selected .period-check { border-color:var(--accent); background:var(--accent); }
+        .period-check svg { width:12px; height:12px; fill:none; stroke:#fff; stroke-width:2.5; stroke-linecap:round; stroke-linejoin:round; opacity:0; transition:opacity 0.15s; }
+        .period-card.selected .period-check svg { opacity:1; }
+        .period-type { font-size:10px; text-transform:uppercase; letter-spacing:0.5px; padding:3px 8px; border-radius:4px; font-weight:600; }
+        .period-type.night { background:rgba(79,70,229,0.2); color:var(--rem); }
+        .period-type.nap { background:rgba(251,191,36,0.15); color:var(--yellow); }
+        .period-info { flex:1; }
+        .period-date { font-size:14px; font-weight:500; }
+        .period-time { font-size:12px; color:var(--text-dim); margin-top:2px; }
+        .period-metrics { display:flex; gap:16px; text-align:right; }
+        .period-metric .val { font-size:18px; font-weight:600; }
+        .period-metric .lbl { font-size:10px; color:var(--text-dim); text-transform:uppercase; }
+        .period-analyze-btn { font-family:inherit; font-size:11px; padding:4px 10px; border-radius:6px; background:var(--accent); border:1px solid var(--accent); color:#fff; cursor:pointer; }
+        .period-analyze-btn:hover { background:#6d5ee0; }
+
+        /* Score cards */
+        .scores-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:24px; }
+        .score-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; text-align:center; }
+        .score-card .label { font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:12px; }
+        .score-card .value { font-size:32px; font-weight:700; letter-spacing:-1px; }
+        .score-card .unit { font-size:14px; color:var(--text-dim); font-weight:400; }
+        /* Circular gauge */
+        .gauge-wrap { position:relative; width:100px; height:100px; margin:0 auto 8px; }
+        .gauge-wrap svg { transform:rotate(-90deg); }
+        .gauge-bg { fill:none; stroke:var(--surface2); stroke-width:7; }
+        .gauge-fill { fill:none; stroke-width:7; stroke-linecap:round; transition:stroke-dashoffset 0.8s ease, stroke 0.3s; }
+        .gauge-text { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; }
+        .gauge-text .pct { font-size:26px; font-weight:700; letter-spacing:-1px; }
+        .gauge-text .pct-sign { font-size:14px; font-weight:400; color:var(--text-dim); }
+        /* Simple horizontal bar for non-% metrics */
+        .metric-bar-wrap { margin-top:10px; }
+        .metric-bar-track { height:5px; background:var(--surface2); border-radius:3px; overflow:hidden; }
+        .metric-bar-fill { height:100%; border-radius:3px; transition:width 0.8s ease; }
+
+        /* Charts */
+        .charts-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px; }
+        .chart-panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; }
+        .chart-panel.full-width { grid-column:1/-1; }
+        .chart-panel h3 { font-size:14px; font-weight:500; color:var(--text-dim); margin-bottom:16px; }
+        .chart-container { position:relative; height:220px; }
+
+        /* Stage bar */
+        .stage-bar { display:flex; height:32px; border-radius:8px; overflow:hidden; margin-bottom:12px; }
+        .stage-bar div { transition:width 0.6s ease; }
+        .stage-bar .awake { background:var(--awake); } .stage-bar .light { background:var(--light); }
+        .stage-bar .deep { background:var(--deep); } .stage-bar .rem { background:var(--rem); }
+        .stage-legend { display:flex; gap:20px; flex-wrap:wrap; }
+        .stage-legend-item { display:flex; align-items:center; gap:6px; font-size:13px; }
+        .stage-legend-item .dot { width:10px; height:10px; border-radius:3px; }
+        .stage-legend-item .minutes { color:var(--text-dim); font-size:12px; }
+
+        /* Vitals */
+        .vitals-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:24px; }
+        .vital-card { background:var(--surface2); border-radius:8px; padding:14px; }
+        .vital-card .label { font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; }
+        .vital-card .value { font-size:22px; font-weight:600; margin-top:4px; }
+        .vital-card .sub { font-size:12px; color:var(--text-dim); }
+
+        /* Empty / progress / toast */
+        .empty-state { text-align:center; padding:60px 20px; color:var(--text-dim); }
+        .empty-state h2 { font-size:18px; color:var(--text); margin-bottom:8px; }
+        .empty-state p { font-size:14px; line-height:1.6; }
+        .empty-state code { display:inline-block; background:var(--surface2); padding:2px 8px; border-radius:4px; font-size:13px; color:var(--accent); }
+        .analysis-progress { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:32px; text-align:center; max-width:500px; margin:60px auto; }
+        .analysis-progress h3 { font-size:16px; margin-bottom:20px; }
+        .progress-track { width:100%; height:6px; background:var(--surface2); border-radius:3px; overflow:hidden; margin-bottom:12px; }
+        .progress-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--accent),var(--green)); border-radius:3px; transition:width 0.4s ease; }
+        .progress-label { font-size:13px; color:var(--text-dim); }
+        .toast { position:fixed; bottom:24px; right:24px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px 20px; font-size:13px; color:var(--text); opacity:0; transform:translateY(10px); transition:all 0.3s ease; z-index:100; pointer-events:none; }
+        .toast.show { opacity:1; transform:translateY(0); }
+
+        @media(max-width:768px) {
+            .charts-grid { grid-template-columns:1fr; }
+            .container { padding:16px; }
+            .health-badges,.mqtt-line { display:none; }
+            .time-bar { flex-direction:column; align-items:stretch; }
+            .sep { width:100%; height:1px; margin:4px 0; }
+            .range-lbl { margin-left:0; text-align:center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span>Signal</span>-to-Sleep</h1>
+        <div class="header-right">
+            <div class="health-badges">
+                <div class="badge" id="badgeDb"><div class="dot" id="dbDot"></div><span>DB</span></div>
+                <div class="badge" id="badgeMqtt"><div class="dot" id="mqttDot"></div><span>MQTT</span></div>
+            </div>
+            <div class="mqtt-line">
+                <span>Topic: <code id="mqttTopic">&mdash;</code></span>
+                <span>Msgs: <span class="ct" id="mqttMsgCount">0</span></span>
+            </div>
+            <span style="font-size:12px;color:var(--text-dim)" id="uptimeText"></span>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Time range bar -->
+        <div class="time-bar">
+            <div class="presets" id="presets">
+                <button data-days="1" class="active">Last night</button>
+                <button data-days="3">3 days</button>
+                <button data-days="5">5 days</button>
+                <button data-days="7">Week</button>
+                <button data-days="14">2 weeks</button>
+                <button data-days="30">Month</button>
+                <button data-days="90">3 months</button>
+                <button data-days="180">6 months</button>
+            </div>
+            <div class="sep"></div>
+            <div class="custom-wrap">
+                <label>Custom</label>
+                <input type="text" id="dateRange" placeholder="Pick dates …" readonly>
+            </div>
+            <div class="range-lbl"><strong id="rStart"></strong> &mdash; <strong id="rEnd"></strong></div>
+        </div>
+
+        <!-- Detected sleep periods -->
+        <div class="periods-header" id="periodsHeader" style="display:none">
+            <h2>Detected Sleep <span class="selected-count" id="selectedCount"></span></h2>
+            <button class="select-all-btn" id="selectAllBtn" onclick="toggleSelectAll()">Select all</button>
+        </div>
+        <div class="periods-list" id="periodsList"></div>
+
+        <!-- Analysis content -->
+        <div id="content">
+            <div class="empty-state">
+                <h2>Select a sleep period</h2>
+                <p>Pick a time range above, then click a detected sleep period to view its analysis.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    let charts = {}, lastMsgCount = 0;
+    let rangeStart = null, rangeEnd = null;
+    let selectedIds = new Set();        // multi-select set
+    let loadedAnalyses = {};            // period_id → analysis data cache
+    let allPeriods = [];                // latest period list from API
+
+    // ── Date helpers ──────────────────────────────────
+    const fmtDate = d => d ? d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : '';
+    const fmtTime = d => d ? d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}) : '';
+    const fmtDuration = m => { const h=Math.floor(m/60),mm=Math.round(m%60); return h>0?`${h}h ${mm}m`:`${mm}m`; };
+    const scoreColor = s => s>=80?'var(--green)':s>=50?'var(--yellow)':'var(--red)';
+
+    function setRange(s,e){ rangeStart=s; rangeEnd=e; updateRangeLabel(); loadPeriods(); }
+    function updateRangeLabel(){
+        document.getElementById('rStart').textContent = rangeStart ? fmtDate(rangeStart):'';
+        document.getElementById('rEnd').textContent = rangeEnd ? fmtDate(rangeEnd):'';
+    }
+
+    // ── Flatpickr ─────────────────────────────────────
+    const fp = flatpickr('#dateRange',{
+        mode:'range', dateFormat:'M j, Y', theme:'dark', maxDate:'today',
+        onChange(sel){ if(sel.length===2){
+            document.querySelectorAll('#presets button').forEach(b=>b.classList.remove('active'));
+            const s=new Date(sel[0]); s.setHours(0,0,0,0);
+            const e=new Date(sel[1]); e.setHours(23,59,59,999);
+            setRange(s,e);
+        }}
+    });
+
+    // ── Preset clicks ─────────────────────────────────
+    document.getElementById('presets').addEventListener('click', e=>{
+        const btn=e.target.closest('button[data-days]'); if(!btn) return;
+        document.querySelectorAll('#presets button').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        const days=parseInt(btn.dataset.days);
+        const end=new Date(); end.setHours(23,59,59,999);
+        const start=new Date(end); start.setDate(start.getDate()-days); start.setHours(0,0,0,0);
+        fp.setDate([start,end],false);
+        setRange(start,end);
+    });
+
+    // Init: "Last night" = today back 1 day
+    (function(){
+        const end=new Date(); end.setHours(23,59,59,999);
+        const start=new Date(end); start.setDate(start.getDate()-1); start.setHours(0,0,0,0);
+        rangeStart=start; rangeEnd=end;
+        fp.setDate([start,end],false);
+        updateRangeLabel();
+    })();
+
+    // ── Toast ─────────────────────────────────────────
+    function showToast(m){ const t=document.getElementById('toast'); t.textContent=m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500); }
+
+    // ── Health polling ────────────────────────────────
+    async function pollHealth(){
+        try{
+            const r=await fetch('/api/health'), h=await r.json();
+            const dbUp=h.checks.database.status==='up';
+            document.getElementById('dbDot').classList.toggle('up',dbUp);
+            document.getElementById('badgeDb').classList.toggle('ok',dbUp);
+            const mqUp=h.checks.mqtt.status==='up';
+            document.getElementById('mqttDot').classList.toggle('up',mqUp);
+            document.getElementById('badgeMqtt').classList.toggle('ok',mqUp);
+            if(h.uptime_sec!=null){ const m=Math.floor(h.uptime_sec/60),hr=Math.floor(m/60); document.getElementById('uptimeText').textContent=hr>0?`up ${hr}h ${m%60}m`:`up ${m}m`; }
+        }catch(e){ document.getElementById('dbDot').classList.remove('up'); document.getElementById('mqttDot').classList.remove('up'); }
+    }
+
+    async function pollMqtt(){
+        try{
+            const r=await fetch('/api/mqtt/status'), s=await r.json();
+            document.getElementById('mqttTopic').textContent=s.topic;
+            document.getElementById('mqttMsgCount').textContent=s.message_count.toLocaleString();
+            if(s.message_count!==lastMsgCount&&s.message_count>0){ lastMsgCount=s.message_count; loadPeriods(); }
+        }catch(e){}
+    }
+
+    // ── Gauge helper ────────────────────────────────
+    function gaugeHTML(pct, label, extra=''){
+        const r=42, circ=2*Math.PI*r;
+        const clamped=Math.max(0,Math.min(100,pct));
+        const offset=circ-(clamped/100)*circ;
+        const col=scoreColor(clamped);
+        return `<div class="score-card">
+            <div class="label">${label}${extra}</div>
+            <div class="gauge-wrap">
+                <svg width="100" height="100" viewBox="0 0 100 100">
+                    <circle class="gauge-bg" cx="50" cy="50" r="${r}"/>
+                    <circle class="gauge-fill" cx="50" cy="50" r="${r}"
+                        stroke="${col}"
+                        stroke-dasharray="${circ}"
+                        stroke-dashoffset="${offset}"/>
+                </svg>
+                <div class="gauge-text">
+                    <span class="pct" style="color:${col}">${Math.round(clamped)}<span class="pct-sign">%</span></span>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    // ── Chart palette for multi-period overlay ──────
+    const PALETTE = [
+        {line:'#f87171',fill:'rgba(248,113,113,0.12)'},
+        {line:'#60a5fa',fill:'rgba(96,165,250,0.12)'},
+        {line:'#34d399',fill:'rgba(52,211,153,0.12)'},
+        {line:'#a78bfa',fill:'rgba(167,139,250,0.12)'},
+        {line:'#fbbf24',fill:'rgba(251,191,36,0.12)'},
+        {line:'#f472b6',fill:'rgba(244,114,182,0.12)'},
+        {line:'#38bdf8',fill:'rgba(56,189,248,0.12)'},
+        {line:'#fb923c',fill:'rgba(251,146,60,0.12)'},
+    ];
+
+    // ── Select-all / deselect-all ─────────────────────
+    function toggleSelectAll(){
+        const analyzedIds = allPeriods.filter(p=>p.has_analysis).map(p=>p.period_id);
+        const allSelected = analyzedIds.length>0 && analyzedIds.every(id=>selectedIds.has(id));
+        if(allSelected){ selectedIds.clear(); }
+        else { analyzedIds.forEach(id=>selectedIds.add(id)); }
+        syncSelectionUI();
+        loadSelectedAnalyses();
+    }
+
+    function syncSelectionUI(){
+        // Update card highlights
+        document.querySelectorAll('.period-card[data-id]').forEach(c=>{
+            c.classList.toggle('selected', selectedIds.has(c.dataset.id));
+        });
+        // Update select-all button text
+        const analyzedIds = allPeriods.filter(p=>p.has_analysis).map(p=>p.period_id);
+        const allSelected = analyzedIds.length>0 && analyzedIds.every(id=>selectedIds.has(id));
+        document.getElementById('selectAllBtn').textContent = allSelected ? 'Deselect all' : 'Select all';
+        // Update count
+        const n = selectedIds.size;
+        document.getElementById('selectedCount').textContent = n>0 ? `(${n} selected)` : '';
+    }
+
+    // ── Load sleep periods ────────────────────────────
+    async function loadPeriods(){
+        const p=new URLSearchParams();
+        if(rangeStart) p.set('start',rangeStart.toISOString());
+        if(rangeEnd) p.set('end',rangeEnd.toISOString());
+        const r=await fetch(`/api/sleep-periods?${p}`);
+        allPeriods=await r.json();
+        const el=document.getElementById('periodsList');
+        const hdr=document.getElementById('periodsHeader');
+
+        if(!allPeriods.length){
+            hdr.style.display='none';
+            el.innerHTML='<div class="empty-state"><p>No sleep detected in this range.</p></div>';
+            document.getElementById('content').innerHTML='';
+            return;
+        }
+
+        hdr.style.display='flex';
+
+        // Prune selected IDs that are no longer in the current range
+        const validIds = new Set(allPeriods.map(p=>p.period_id));
+        for(const id of selectedIds){ if(!validIds.has(id)) selectedIds.delete(id); }
+
+        el.innerHTML=allPeriods.map(p=>{
+            const s=new Date(p.started_at), e=new Date(p.ended_at);
+            const dateStr=s.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
+            const timeStr=`${fmtTime(s)} \u2013 ${fmtTime(e)}`;
+            const sel=selectedIds.has(p.period_id)?'selected':'';
+            const analyzeBtn=p.has_analysis?'':`<button class="period-analyze-btn" onclick="event.stopPropagation();analyzePeriod('${p.period_id}')">Analyze</button>`;
+            return `<div class="period-card ${sel}" data-id="${p.period_id}" onclick="togglePeriod('${p.period_id}',${p.has_analysis})">
+                <div class="period-check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></div>
+                <span class="period-type ${p.sleep_type}">${p.sleep_type}</span>
+                <div class="period-info">
+                    <div class="period-date">${dateStr}</div>
+                    <div class="period-time">${timeStr} &middot; ${fmtDuration(p.duration_min)}</div>
+                </div>
+                <div class="period-metrics">
+                    <div class="period-metric"><div class="val">${Math.round(p.confidence*100)}%</div><div class="lbl">Confidence</div></div>
+                </div>
+                ${analyzeBtn}
+            </div>`;
+        }).join('');
+
+        syncSelectionUI();
+
+        // Auto-select all analyzed periods on first load
+        if(selectedIds.size===0){
+            allPeriods.filter(p=>p.has_analysis).forEach(p=>selectedIds.add(p.period_id));
+            syncSelectionUI();
+            loadSelectedAnalyses();
+        }
+    }
+
+    function togglePeriod(id, hasAnalysis){
+        if(!hasAnalysis){
+            document.getElementById('content').innerHTML='<div class="empty-state"><p>Click <strong>Analyze</strong> on this period first.</p></div>';
+            return;
+        }
+        if(selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+        syncSelectionUI();
+        loadSelectedAnalyses();
+    }
+
+    // ── Fetch analyses for all selected, then render ──
+    async function loadSelectedAnalyses(){
+        if(selectedIds.size===0){
+            document.getElementById('content').innerHTML='<div class="empty-state"><h2>Select a sleep period</h2><p>Click one or more periods above to view their analysis.</p></div>';
+            return;
+        }
+        // Fetch any we haven't cached yet
+        const toFetch=[...selectedIds].filter(id=>!loadedAnalyses[id]);
+        const fetches=toFetch.map(async id=>{
+            try{ const r=await fetch(`/api/analysis/${id}`); if(r.ok) loadedAnalyses[id]=await r.json(); }catch(e){}
+        });
+        if(fetches.length) await Promise.all(fetches);
+
+        // Gather analyses in order (most recent first, matching allPeriods order)
+        const analyses=[];
+        for(const p of allPeriods){
+            if(selectedIds.has(p.period_id) && loadedAnalyses[p.period_id]){
+                analyses.push({period:p, analysis:loadedAnalyses[p.period_id]});
+            }
+        }
+        if(!analyses.length){
+            document.getElementById('content').innerHTML='<div class="empty-state"><p>No analysis data for selected periods.</p></div>';
+            return;
+        }
+        renderMultiDashboard(analyses);
+    }
+
+    // ── Analysis trigger (single period) ──────────────
+    async function analyzePeriod(id){
+        selectedIds.add(id);
+        syncSelectionUI();
+        document.getElementById('content').innerHTML=`
+            <div class="analysis-progress">
+                <h3>Analyzing Sleep Data</h3>
+                <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+                <div class="progress-label" id="progressLabel">Starting\u2026</div>
+            </div>`;
+
+        try{
+            const es=new EventSource(`/api/analyze/${id}/stream`);
+            es.onmessage=async(ev)=>{
+                const d=JSON.parse(ev.data);
+                if(d.type==='progress'){ document.getElementById('progressFill').style.width=d.pct+'%'; document.getElementById('progressLabel').textContent=d.message; }
+                if(d.type==='complete'){ es.close(); document.getElementById('progressFill').style.width='100%'; document.getElementById('progressLabel').textContent=`Done \u2014 Recovery ${Math.round(d.recovery_score)}/100`; delete loadedAnalyses[id]; setTimeout(async()=>{ await loadPeriods(); await loadSelectedAnalyses(); showToast('Analysis complete'); },600); }
+                if(d.type==='error'){ es.close(); document.getElementById('progressLabel').textContent=`Error: ${d.message}`; document.getElementById('progressFill').style.background='var(--red)'; }
+            };
+            es.onerror=()=>{ es.close(); document.getElementById('progressLabel').textContent='Connection lost.'; };
+        }catch(e){ document.getElementById('content').innerHTML=`<div class="empty-state"><p>Error: ${e.message}</p></div>`; }
+    }
+
+    // ── Aggregation helpers ───────────────────────────
+    function avg(arr){ return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
+    function sum(arr){ return arr.reduce((a,b)=>a+b,0); }
+
+    // ── Render multi-period dashboard ─────────────────
+    function renderMultiDashboard(items){
+        const n=items.length, single=n===1;
+        const aa=items.map(i=>i.analysis); // all analyses
+
+        // Aggregated scores (averages)
+        const aRecovery=avg(aa.map(a=>a.recovery_score));
+        const aQuality=avg(aa.map(a=>a.sleep_quality_score));
+        const aEfficiency=avg(aa.map(a=>a.sleep_efficiency));
+        const aTotalMin=single ? aa[0].total_duration_min : avg(aa.map(a=>a.total_duration_min));
+        const aAwake=avg(aa.map(a=>a.awake_min));
+        const aLight=avg(aa.map(a=>a.light_sleep_min));
+        const aDeep=avg(aa.map(a=>a.deep_sleep_min));
+        const aRem=avg(aa.map(a=>a.rem_sleep_min));
+        const totalSleep=aLight+aDeep+aRem;
+        const total=aTotalMin||1;
+        const awakePct=(aAwake/total*100).toFixed(0), lightPct=(aLight/total*100).toFixed(0), deepPct=(aDeep/total*100).toFixed(0), remPct=(aRem/total*100).toFixed(0);
+
+        const avgTag=single?'':' <span style="font-size:10px;color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:0">avg</span>';
+        const aHr=avg(aa.map(a=>a.avg_heart_rate||0));
+        const aMinHr=Math.min(...aa.map(a=>a.min_heart_rate||999));
+        const aMaxHr=Math.max(...aa.map(a=>a.max_heart_rate||0));
+        const aResp=avg(aa.filter(a=>a.avg_respiratory_rate).map(a=>a.avg_respiratory_rate));
+        const aHrv=avg(aa.filter(a=>a.avg_hrv).map(a=>a.avg_hrv));
+
+        document.getElementById('content').innerHTML=`
+            <div class="scores-grid">
+                ${gaugeHTML(aRecovery,'Recovery'+avgTag)}
+                ${gaugeHTML(aQuality,'Sleep Quality'+avgTag)}
+                ${gaugeHTML(aEfficiency,'Efficiency'+avgTag)}
+                <div class="score-card">
+                    <div class="label">${single?'Total Time':'Avg Duration'}</div>
+                    <div class="value" style="font-size:28px;margin-top:20px">${fmtDuration(aTotalMin)}</div>
+                    <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${single?'in bed':'per night'}</div>
+                </div>
+                <div class="score-card">
+                    <div class="label">${single?'Time Asleep':'Avg Asleep'}</div>
+                    <div class="value" style="font-size:28px;margin-top:20px">${fmtDuration(totalSleep)}</div>
+                    <div style="font-size:12px;color:var(--text-dim);margin-top:4px">actual sleep</div>
+                </div>
+            </div>
+            <div class="chart-panel full-width" style="margin-bottom:24px">
+                <h3>Sleep Stages${single?'':' (average)'}</h3>
+                <div class="stage-bar">
+                    <div class="awake" style="width:${awakePct}%"></div><div class="light" style="width:${lightPct}%"></div>
+                    <div class="deep" style="width:${deepPct}%"></div><div class="rem" style="width:${remPct}%"></div>
+                </div>
+                <div class="stage-legend">
+                    <div class="stage-legend-item"><div class="dot" style="background:var(--awake)"></div>Awake <span class="minutes">${fmtDuration(aAwake)}</span></div>
+                    <div class="stage-legend-item"><div class="dot" style="background:var(--light)"></div>Light <span class="minutes">${fmtDuration(aLight)}</span></div>
+                    <div class="stage-legend-item"><div class="dot" style="background:var(--deep)"></div>Deep <span class="minutes">${fmtDuration(aDeep)}</span></div>
+                    <div class="stage-legend-item"><div class="dot" style="background:var(--rem)"></div>REM <span class="minutes">${fmtDuration(aRem)}</span></div>
+                </div>
+                <div class="chart-container" style="margin-top:16px"><canvas id="stageChart"></canvas></div>
+            </div>
+            <div class="vitals-grid">
+                <div class="vital-card"><div class="label">Avg Heart Rate</div><div class="value">${aHr?Math.round(aHr):'\u2014'}</div><div class="sub">bpm</div></div>
+                <div class="vital-card"><div class="label">Min Heart Rate</div><div class="value">${aMinHr<999?Math.round(aMinHr):'\u2014'}</div><div class="sub">bpm</div></div>
+                <div class="vital-card"><div class="label">Max Heart Rate</div><div class="value">${aMaxHr?Math.round(aMaxHr):'\u2014'}</div><div class="sub">bpm</div></div>
+                <div class="vital-card"><div class="label">Respiratory Rate</div><div class="value">${aResp?aResp.toFixed(1):'\u2014'}</div><div class="sub">breaths/min</div></div>
+                <div class="vital-card"><div class="label">HRV (RMSSD)</div><div class="value">${aHrv?Math.round(aHrv):'\u2014'}</div><div class="sub">ms</div></div>
+            </div>
+            <div class="charts-grid">
+                <div class="chart-panel"><h3>Heart Rate</h3><div class="chart-container"><canvas id="hrChart"></canvas></div></div>
+                <div class="chart-panel"><h3>Movement</h3><div class="chart-container"><canvas id="movChart"></canvas></div></div>
+                <div class="chart-panel"><h3>Respiratory Rate</h3><div class="chart-container"><canvas id="respChart"></canvas></div></div>
+                <div class="chart-panel"><h3>Sleep Stage Timeline</h3><div class="chart-container" style="height:180px"><canvas id="stageTimelineChart"></canvas></div></div>
+            </div>`;
+        renderMultiCharts(items);
+    }
+
+    // ── Build a label for a period (used in chart legends) ──
+    function periodLabel(p){
+        const d=new Date(p.started_at);
+        return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' ' + p.sleep_type;
+    }
+
+    // ── Chart annotation plugin (avg dashed line + anomaly dots) ─
+    const overlayPlugin = {
+        id:'overlayPlugin',
+        afterDraw(chart){
+            const opts = chart.options.plugins?.overlayPlugin;
+            if(!opts) return;
+            const {ctx, chartArea, scales:{y:yAxis, x:xAxis}} = chart;
+            if(!chartArea || !yAxis) return;
+
+            // ── Dashed avg/threshold lines ──
+            if(opts.lines){
+                opts.lines.forEach(({value, color, label, dash})=>{
+                    const py = yAxis.getPixelForValue(value);
+                    if(py<chartArea.top||py>chartArea.bottom) return;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.setLineDash(dash||[6,4]);
+                    ctx.strokeStyle = color||'rgba(255,255,255,0.4)';
+                    ctx.lineWidth = 1.5;
+                    ctx.moveTo(chartArea.left, py);
+                    ctx.lineTo(chartArea.right, py);
+                    ctx.stroke();
+                    if(label){
+                        ctx.setLineDash([]);
+                        ctx.fillStyle = color||'rgba(255,255,255,0.6)';
+                        ctx.font = '10px -apple-system, sans-serif';
+                        ctx.textAlign = 'right';
+                        ctx.fillText(label, chartArea.right - 4, py - 5);
+                    }
+                    ctx.restore();
+                });
+            }
+
+            // ── Anomaly markers (circles + optional triangles) ──
+            if(opts.anomalies && xAxis){
+                ctx.save();
+                opts.anomalies.forEach(({x, y, color, symbol})=>{
+                    const px = xAxis.getPixelForValue(x);
+                    const py2 = yAxis.getPixelForValue(y);
+                    if(px<chartArea.left||px>chartArea.right||py2<chartArea.top||py2>chartArea.bottom) return;
+                    ctx.fillStyle = color||'#f87171';
+                    ctx.globalAlpha = 0.85;
+                    if(symbol==='triangle'){
+                        ctx.beginPath();
+                        ctx.moveTo(px, py2-6); ctx.lineTo(px-5, py2+4); ctx.lineTo(px+5, py2+4);
+                        ctx.closePath(); ctx.fill();
+                    } else {
+                        ctx.beginPath();
+                        ctx.arc(px, py2, 4, 0, Math.PI*2);
+                        ctx.fill();
+                        ctx.globalAlpha = 0.3;
+                        ctx.beginPath();
+                        ctx.arc(px, py2, 8, 0, Math.PI*2);
+                        ctx.fill();
+                    }
+                });
+                ctx.restore();
+            }
+        }
+    };
+    Chart.register(overlayPlugin);
+
+    // ── Hypnogram plugin (colored rectangular blocks) ────
+    const hypnogramPlugin = {
+        id:'hypnogramPlugin',
+        beforeDraw(chart){
+            const opts = chart.options.plugins?.hypnogramPlugin;
+            if(!opts?.stages) return;
+            const {ctx, chartArea, scales:{y:yAxis, x:xAxis}} = chart;
+            if(!chartArea||!yAxis||!xAxis) return;
+            const stages = opts.stages;
+            const colors = {
+                deep:  'rgba(79,70,229,0.55)',
+                light: 'rgba(96,165,250,0.35)',
+                rem:   'rgba(167,139,250,0.45)',
+                awake: 'rgba(248,113,113,0.50)',
+            };
+            const sm = {deep:0, light:1, rem:2, awake:3};
+            ctx.save();
+            for(let i=0;i<stages.length;i++){
+                const s = stages[i];
+                const nextT = i<stages.length-1 ? stages[i+1].t : null;
+                if(!nextT) continue;
+                const x1 = xAxis.getPixelForValue(s.t);
+                const x2 = xAxis.getPixelForValue(nextT);
+                const yVal = sm[s.stage]??1;
+                // Draw band at this stage's y-level only
+                const yTop = yAxis.getPixelForValue(yVal+0.45);
+                const yBot = yAxis.getPixelForValue(yVal-0.45);
+                ctx.fillStyle = colors[s.stage]||colors.light;
+                ctx.fillRect(Math.round(x1), Math.round(Math.min(yTop,yBot)), Math.round(x2-x1), Math.round(Math.abs(yBot-yTop)));
+            }
+            ctx.restore();
+        }
+    };
+    Chart.register(hypnogramPlugin);
+
+    // ── Anomaly detection helpers ─────────────────────
+    function detectAnomalies(series, keyY, opts={}){
+        const vals = series.map(d=> typeof d === 'object' ? (d[keyY]??d.y??d.v) : d);
+        if(vals.length<10) return [];
+        const mean = vals.reduce((a,b)=>a+b,0)/vals.length;
+        const std = Math.sqrt(vals.reduce((a,b)=>a+(b-mean)**2,0)/vals.length)||1;
+        const threshold = opts.sigma || 2.2;
+        const anomalies = [];
+        series.forEach((d,i)=>{
+            const v = vals[i];
+            const z = Math.abs(v - mean) / std;
+            if(z > threshold){
+                const t = d.t ?? d.x ?? d.time;
+                const color = v > mean ? (opts.highColor||'#f87171') : (opts.lowColor||'#60a5fa');
+                anomalies.push({x:t, y:v, color, symbol: v>mean?'triangle':'circle'});
+            }
+        });
+        return anomalies;
+    }
+
+    // ── Stage color map ──────────────────────────────
+    const STAGE_COLORS = {
+        deep: {line:'#4f46e5',fill:'rgba(79,70,229,0.35)'},
+        light:{line:'#60a5fa',fill:'rgba(96,165,250,0.25)'},
+        rem:  {line:'#a78bfa',fill:'rgba(167,139,250,0.30)'},
+        awake:{line:'#f87171',fill:'rgba(248,113,113,0.30)'},
+    };
+
+    // ── Build stage-colored HR segments ──────────────
+    function buildStageColoredHR(hrSeries, stageSeries){
+        // Map time → stage for quick lookup
+        const stageMap = new Map();
+        for(let i=0;i<stageSeries.length;i++){
+            const s=stageSeries[i], nextT=i<stageSeries.length-1?stageSeries[i+1].t:Infinity;
+            stageMap.set(s.t, {stage:s.stage, endT:nextT});
+        }
+        // For each HR point, find its stage
+        let currentStage='light', stageEnd=Infinity;
+        const sortedStages=[...stageSeries].sort((a,b)=>a.t-b.t);
+        let si=0;
+        const hrWithStage = hrSeries.map(d=>{
+            while(si<sortedStages.length-1 && d.t>=sortedStages[si+1].t) si++;
+            if(si<sortedStages.length) currentStage=sortedStages[si].stage;
+            return {...d, stage:currentStage};
+        });
+        return hrWithStage;
+    }
+
+    // ── Render overlaid charts ────────────────────────
+    function renderMultiCharts(items){
+        Object.values(charts).forEach(c=>c.destroy()); charts={};
+        const multi=items.length>1;
+        const timeScale={type:'time',time:{tooltipFormat:'HH:mm',displayFormats:{hour:'HH:mm',minute:'HH:mm'}},grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#8b8fa3',font:{size:11}}};
+        const yDef={grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'#8b8fa3',font:{size:11}}};
+        const baseDefs={responsive:true,maintainAspectRatio:false,animation:{duration:600},
+            plugins:{legend:{display:multi,labels:{color:'#8b8fa3',boxWidth:12,padding:8,font:{size:11}}}},
+            scales:{x:timeScale,y:yDef}};
+
+        // ═══ HR chart — stage-colored + avg dashed + anomalies ═══
+        if(!multi && items[0].analysis.heart_rate_series.length>0){
+            const a=items[0].analysis;
+            const hrWithStage = buildStageColoredHR(a.heart_rate_series, a.sleep_stage_series);
+            const avgHR = a.avg_heart_rate || avg(a.heart_rate_series.map(d=>d.v));
+            const hrAnomalies = detectAnomalies(a.heart_rate_series, 'v', {sigma:2.0, highColor:'#f87171', lowColor:'#4f46e5'});
+
+            charts.hr=new Chart(document.getElementById('hrChart').getContext('2d'),{type:'line',
+                data:{datasets:[{
+                    data: hrWithStage.map(d=>({x:d.t,y:d.v})),
+                    borderWidth:1.5, pointRadius:0, tension:0.3, fill:true,
+                    segment:{
+                        borderColor: ctx=>{const s=hrWithStage[ctx.p0DataIndex]?.stage||'light'; return STAGE_COLORS[s].line;},
+                        backgroundColor: ctx=>{const s=hrWithStage[ctx.p0DataIndex]?.stage||'light'; return STAGE_COLORS[s].fill;}
+                    }
+                }]},
+                options:{...baseDefs,plugins:{...baseDefs.plugins,legend:{display:false},
+                    overlayPlugin:{
+                        lines:[
+                            {value:avgHR, color:'rgba(255,255,255,0.55)', label:`avg ${Math.round(avgHR)} bpm`},
+                        ],
+                        anomalies: hrAnomalies
+                    }
+                },scales:{x:timeScale,y:{...yDef,title:{display:true,text:'BPM',color:'#8b8fa3'}}}}
+            });
+        } else if(multi){
+            const hrDatasets=items.map((item,i)=>{
+                const c=PALETTE[i%PALETTE.length];
+                return {label:periodLabel(item.period),data:item.analysis.heart_rate_series.map(d=>({x:d.t,y:d.v})),borderColor:c.line,backgroundColor:c.fill,borderWidth:1.5,pointRadius:0,fill:false,tension:0.3};
+            }).filter(ds=>ds.data.length>0);
+            if(hrDatasets.length){
+                const allVals=items.flatMap(i=>i.analysis.heart_rate_series.map(d=>d.v));
+                const avgHR=allVals.length?allVals.reduce((a,b)=>a+b,0)/allVals.length:0;
+                charts.hr=new Chart(document.getElementById('hrChart').getContext('2d'),{type:'line',data:{datasets:hrDatasets},
+                    options:{...baseDefs,plugins:{...baseDefs.plugins,
+                        overlayPlugin:{lines:[{value:avgHR,color:'rgba(255,255,255,0.4)',label:`avg ${Math.round(avgHR)}`}]}
+                    },scales:{x:timeScale,y:{...yDef,title:{display:true,text:'BPM',color:'#8b8fa3'}}}}});
+            }
+        }
+
+        // ═══ Movement chart — bars + avg + anomaly spikes ═══
+        if(!multi){
+            const a=items[0].analysis;
+            if(a.movement_series.length){
+                const avgMov=avg(a.movement_series.map(d=>d.v));
+                const movAnomalies=detectAnomalies(a.movement_series,'v',{sigma:2.5,highColor:'#fbbf24'});
+                charts.mov=new Chart(document.getElementById('movChart').getContext('2d'),{type:'bar',
+                    data:{datasets:[{data:a.movement_series.map(d=>({x:d.t,y:d.v})),
+                        backgroundColor:a.movement_series.map(d=>d.v>0.04?'rgba(248,113,113,0.7)':'rgba(96,165,250,0.45)'),
+                        borderWidth:0,barPercentage:1.0,categoryPercentage:1.0}]},
+                    options:{...baseDefs,plugins:{...baseDefs.plugins,legend:{display:false},
+                        overlayPlugin:{
+                            lines:[{value:avgMov,color:'rgba(251,191,36,0.6)',label:`avg ${avgMov.toFixed(3)}g`}],
+                            anomalies:movAnomalies
+                        }
+                    },scales:{x:timeScale,y:{...yDef,title:{display:true,text:'g',color:'#8b8fa3'}}}}});
+            }
+        } else {
+            const movDatasets=items.map((item,i)=>{
+                const c=PALETTE[i%PALETTE.length];
+                return {label:periodLabel(item.period),data:item.analysis.movement_series.map(d=>({x:d.t,y:d.v})),borderColor:c.line,backgroundColor:'transparent',borderWidth:1.2,pointRadius:0,tension:0.3};
+            }).filter(ds=>ds.data.length>0);
+            if(movDatasets.length){
+                const allMov=items.flatMap(i=>i.analysis.movement_series.map(d=>d.v));
+                const avgMov=allMov.length?allMov.reduce((a,b)=>a+b,0)/allMov.length:0;
+                charts.mov=new Chart(document.getElementById('movChart').getContext('2d'),{type:'line',data:{datasets:movDatasets},
+                    options:{...baseDefs,plugins:{...baseDefs.plugins,
+                        overlayPlugin:{lines:[{value:avgMov,color:'rgba(251,191,36,0.4)',label:`avg ${avgMov.toFixed(3)}g`}]}
+                    },scales:{x:timeScale,y:{...yDef,title:{display:true,text:'g',color:'#8b8fa3'}}}}});
+            }
+        }
+
+        // ═══ Respiratory chart — with avg + anomalies ═══
+        const respDatasets=items.map((item,i)=>{
+            const c=PALETTE[i%PALETTE.length];
+            return {label:periodLabel(item.period),data:item.analysis.respiratory_series.map(d=>({x:d.t,y:d.v})),borderColor:multi?c.line:'#34d399',backgroundColor:multi?'transparent':'rgba(52,211,153,0.08)',borderWidth:1.5,pointRadius:0,fill:!multi,tension:0.4};
+        }).filter(ds=>ds.data.length>0);
+        if(respDatasets.length){
+            const allResp=items.flatMap(i=>i.analysis.respiratory_series.map(d=>d.v));
+            const avgResp=allResp.length?allResp.reduce((a,b)=>a+b,0)/allResp.length:0;
+            const respAnomalies=!multi?detectAnomalies(items[0].analysis.respiratory_series,'v',{sigma:2.0,highColor:'#fbbf24',lowColor:'#60a5fa'}):[];
+            charts.resp=new Chart(document.getElementById('respChart').getContext('2d'),{type:'line',data:{datasets:respDatasets},
+                options:{...baseDefs,plugins:{...baseDefs.plugins,legend:{display:multi},
+                    overlayPlugin:{
+                        lines:[{value:avgResp,color:'rgba(52,211,153,0.55)',label:`avg ${avgResp.toFixed(1)} br/min`}],
+                        anomalies:respAnomalies
+                    }
+                },scales:{x:timeScale,y:{...yDef,title:{display:true,text:'breaths/min',color:'#8b8fa3'}}}}});
+        }
+
+        // ═══ Sleep Stage Timeline — colored block hypnogram ═══
+        const sm={awake:3,rem:2,light:1,deep:0};
+
+        if(!multi){
+            const ss=items[0].analysis.sleep_stage_series;
+            if(ss.length){
+                // Invisible dataset just to set up axes
+                const data=ss.map(d=>({x:d.t,y:sm[d.stage]}));
+                charts.stages=new Chart(document.getElementById('stageTimelineChart').getContext('2d'),{type:'line',
+                    data:{datasets:[{data, borderWidth:0, pointRadius:0, fill:false, showLine:false}]},
+                    options:{...baseDefs,plugins:{...baseDefs.plugins,legend:{display:false},
+                        tooltip:{enabled:true,callbacks:{
+                            label:ctx=>{const names=['Deep','Light','REM','Awake']; return names[ctx.parsed.y]||'';}
+                        }},
+                        hypnogramPlugin:{stages:ss}
+                    },scales:{x:timeScale,y:{...yDef,min:-0.5,max:3.5,reverse:true,
+                        ticks:{callback:v=>({0:'Deep',1:'Light',2:'REM',3:'Awake'}[v])||'',stepSize:1,color:'#8b8fa3',font:{size:11}},
+                        grid:{color:ctx=>ctx.tick.value>=0&&ctx.tick.value<=3?'rgba(255,255,255,0.06)':'transparent'}}}}
+                });
+            }
+        } else {
+            // Multi: overlay as stepped lines
+            const stageDatasets=items.map((item,i)=>{
+                const c=PALETTE[i%PALETTE.length];
+                return {label:periodLabel(item.period),data:item.analysis.sleep_stage_series.map(d=>({x:d.t,y:sm[d.stage]})),borderColor:c.line,backgroundColor:'transparent',borderWidth:2,pointRadius:0,stepped:'before',fill:false};
+            }).filter(ds=>ds.data.length>0);
+            if(stageDatasets.length){
+                charts.stages=new Chart(document.getElementById('stageTimelineChart').getContext('2d'),{type:'line',data:{datasets:stageDatasets},
+                    options:{...baseDefs,scales:{x:timeScale,y:{...yDef,min:-0.5,max:3.5,reverse:true,
+                        ticks:{callback:v=>({0:'Deep',1:'Light',2:'REM',3:'Awake'}[v])||'',stepSize:1,color:'#8b8fa3',font:{size:11}}}}}});
+            }
+        }
+
+        // ═══ Stage donut — aggregated ═══
+        const dAwake=avg(items.map(i=>i.analysis.awake_min));
+        const dLight=avg(items.map(i=>i.analysis.light_sleep_min));
+        const dDeep=avg(items.map(i=>i.analysis.deep_sleep_min));
+        const dRem=avg(items.map(i=>i.analysis.rem_sleep_min));
+        const stageCtx=document.getElementById('stageChart');
+        if(stageCtx){ charts.donut=new Chart(stageCtx.getContext('2d'),{type:'doughnut',data:{labels:['Awake','Light','Deep','REM'],datasets:[{data:[dAwake,dLight,dDeep,dRem],backgroundColor:['#f87171','#60a5fa','#4f46e5','#a78bfa'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmtDuration(ctx.parsed)}`}}}}}); }
+    }
+
+    // ── Init ──────────────────────────────────────────
+    loadPeriods(); pollHealth(); pollMqtt();
+    setInterval(pollHealth,10000); setInterval(pollMqtt,5000);
+    </script>
+</body>
+</html>

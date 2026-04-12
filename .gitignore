@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+*.pyo
+*.db
+db/
+!db/.gitkeep
+
+# Credentials — never commit these
+.env
+mosquitto/passwd
+mosquitto/certs/
+
+# Demo runtime
+.demo.pid
+.demo.log
+
+# IDE
+.vscode/
+.idea/
+
+# Python
+.venv/
+venv/
+*.egg-info/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
