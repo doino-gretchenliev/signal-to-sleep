@@ -364,8 +364,6 @@ body {
   font-size: 1rem;
 }
 
-/* Flatpickr removed — using preset buttons only */
-
 /* Responsive */
 @media (max-width: 1024px) {
   .charts-grid {

@@ -6,8 +6,6 @@
         <span class="leg-item"><span class="leg-bar" style="background:#60a5fa"></span>Movement</span>
         <span class="leg-item"><span class="leg-bar" style="background:#f87171"></span>High Activity</span>
         <span class="leg-item"><span class="leg-dash" style="border-color:#8b8fa3"></span>Average</span>
-        <span class="leg-item"><span class="leg-zone" style="background:rgba(239,68,68,0.25)"></span>Restless</span>
-        <span class="leg-item"><span class="leg-zone" style="background:rgba(45,212,191,0.2)"></span>Calm</span>
         <button class="stage-toggle" :class="{ active: showStages }" @click="toggleStages">
           <span class="stage-icon"></span>Sleep Stages
         </button>
@@ -45,52 +43,6 @@ let svg, g, rootG, xScale, yScale, gX, gY, resizeObs, w = 600, h = 260
 function periodLabel(p) {
   const d = new Date(p.started_at)
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + p.sleep_type
-}
-
-/** Find notable movement zones: most restless burst and calmest stretch */
-function findNotableZones(series) {
-  if (series.length < 3) return { points: [], zones: [] }
-  const vals = series.map(d => d.v)
-  const maxVal = d3.max(vals)
-  const points = []
-  const zones = []
-
-  // Peak movement point
-  const peakPt = series.find(d => d.v === maxVal)
-  if (peakPt) points.push({ ...peakPt, label: `Peak ${peakPt.v.toFixed(3)}g`, type: 'peak' })
-
-  // Find restless bursts — consecutive points above 75th percentile
-  const p75 = d3.quantile([...vals].sort(d3.ascending), 0.75) || 0
-  let burstStart = -1
-  for (let i = 0; i <= series.length; i++) {
-    const aboveThreshold = i < series.length && series[i].v > p75
-    if (aboveThreshold && burstStart < 0) burstStart = i
-    if (!aboveThreshold && burstStart >= 0) {
-      if (i - burstStart >= 2) {
-        zones.push({ start: series[burstStart].t, end: series[i - 1].t, type: 'restless' })
-      }
-      burstStart = -1
-    }
-  }
-
-  // Find calmest stretch — longest run of points below 25th percentile
-  const p25 = d3.quantile([...vals].sort(d3.ascending), 0.25) || 0
-  let calmStart = -1, bestCalmLen = 0, bestCalmStart = -1, bestCalmEnd = -1
-  for (let i = 0; i <= series.length; i++) {
-    const belowThreshold = i < series.length && series[i].v <= p25
-    if (belowThreshold && calmStart < 0) calmStart = i
-    if (!belowThreshold && calmStart >= 0) {
-      if (i - calmStart > bestCalmLen) {
-        bestCalmLen = i - calmStart; bestCalmStart = calmStart; bestCalmEnd = i - 1
-      }
-      calmStart = -1
-    }
-  }
-  if (bestCalmLen >= 3) {
-    zones.push({ start: series[bestCalmStart].t, end: series[bestCalmEnd].t, type: 'calm' })
-  }
-
-  return { points, zones }
 }
 
 function downsample(data, maxPts) {
@@ -151,7 +103,6 @@ function init() {
   g.append('g').attr('class', 'stage-bg')
   g.append('g').attr('class', 'data-layer')
   g.append('g').attr('class', 'avg-layer')
-  g.append('g').attr('class', 'anomaly-layer')
 
   const ch = rootG.append('g').attr('class', 'crosshair').style('display', 'none')
   ch.append('line').attr('y1', 0).attr('y2', ih).attr('stroke', '#7c6ef0').attr('stroke-dasharray', '3,3').attr('stroke-width', 1)
@@ -199,9 +150,14 @@ function render(xS) {
   if (!allData.length) return
 
   const tExtent = d3.extent(allData, d => d.t)
-  const vExtent = d3.extent(allData, d => d.v)
   xScale.domain([new Date(tExtent[0]), new Date(tExtent[1])])
-  yScale.domain([0, (vExtent[1] || 0.1) + 0.01]).nice()
+
+  // Use p95 as Y-axis max instead of absolute max
+  // This prevents one huge spike from squashing everything else to the bottom
+  const sortedVals = allData.map(d => d.v).sort((a, b) => a - b)
+  const p95 = sortedVals[Math.floor(sortedVals.length * 0.95)] || 0.1
+  const yMax = Math.max(p95 * 1.2, 0.01)
+  yScale.domain([0, yMax]).nice()
 
   gX.call(d3.axisBottom(xS).ticks(6).tickFormat(d3.timeFormat('%H:%M'))).call(styleAxis)
   gY.call(d3.axisLeft(yScale).ticks(5).tickFormat(d => d.toFixed(2))).call(styleAxis)
@@ -211,7 +167,7 @@ function render(xS) {
     .attr('x1', 0).attr('x2', iw).attr('y1', d => yScale(d)).attr('y2', d => yScale(d))
     .attr('stroke', 'rgba(255,255,255,0.05)')
 
-  // Stage strip at top (uses its own x-scale spanning full stage series)
+  // Stage strip at top
   const strip = svg.select('.stage-strip')
   strip.selectAll('*').remove()
   if (single && showStages.value) {
@@ -239,24 +195,29 @@ function render(xS) {
   const dataLayer = g.select('.data-layer')
   dataLayer.selectAll('*').remove()
 
+  // Activity threshold — bars above this are red
+  const activityThreshold = yMax * 0.5
+
   if (single) {
     const raw = props.items[0].analysis.movement_series || []
     const data = downsample(raw, maxPts)
-    // Bar chart
+    // Bar chart — values above yMax are clamped visually (bars hit the top)
     data.forEach((d, i) => {
       const x1 = xS(new Date(d.t))
       const nextT = data[i + 1]?.t || d.t + 60000
       const x2 = xS(new Date(nextT))
       const bw = Math.max(1, x2 - x1)
       if (x2 > 0 && x1 < iw) {
+        const clampedV = Math.min(d.v, yMax)
+        const isHigh = d.v > activityThreshold
         dataLayer.append('rect')
           .attr('x', Math.max(0, x1)).attr('width', Math.min(iw, x1 + bw) - Math.max(0, x1))
-          .attr('y', yScale(d.v)).attr('height', Math.max(0, ih - yScale(d.v)))
-          .attr('fill', d.v > 0.04 ? '#f87171' : '#60a5fa').attr('opacity', 0.7)
+          .attr('y', yScale(clampedV)).attr('height', Math.max(0, ih - yScale(clampedV)))
+          .attr('fill', isHigh ? '#f87171' : '#60a5fa').attr('opacity', 0.7)
       }
     })
   } else {
-    const line = d3.line().x(d => xS(new Date(d.t))).y(d => yScale(d.v)).curve(d3.curveMonotoneX)
+    const line = d3.line().x(d => xS(new Date(d.t))).y(d => yScale(Math.min(d.v, yMax))).curve(d3.curveMonotoneX)
     props.items.forEach((item, i) => {
       const raw = item.analysis.movement_series || []
       const data = downsample(raw, maxPts)
@@ -269,58 +230,13 @@ function render(xS) {
   const avgLayer = g.select('.avg-layer')
   avgLayer.selectAll('*').remove()
   const avgVal = d3.mean(allData, d => d.v)
-  if (avgVal != null) {
+  if (avgVal != null && avgVal < yMax) {
     avgLayer.append('line').attr('x1', 0).attr('x2', iw)
       .attr('y1', yScale(avgVal)).attr('y2', yScale(avgVal))
       .attr('stroke', 'rgba(255,255,255,0.4)').attr('stroke-dasharray', '6,4').attr('stroke-width', 1)
     avgLayer.append('text').attr('x', iw - 4).attr('y', yScale(avgVal) - 5)
       .attr('fill', 'rgba(255,255,255,0.5)').attr('font-size', '10px').attr('text-anchor', 'end')
       .text(`avg ${avgVal.toFixed(3)}g`)
-  }
-
-  // Notable zones & points
-  const anomLayer = g.select('.anomaly-layer')
-  anomLayer.selectAll('*').remove()
-  if (single) {
-    const raw = props.items[0].analysis.movement_series || []
-    const { points, zones } = findNotableZones(raw)
-
-    // Highlight zones as shaded bands (no text — colors speak for themselves)
-    zones.forEach(z => {
-      const x1 = xS(new Date(z.start)), x2 = xS(new Date(z.end))
-      if (x2 < 0 || x1 > iw) return
-      const clampX1 = Math.max(0, x1), clampX2 = Math.min(iw, x2)
-      const isRestless = z.type === 'restless'
-      anomLayer.append('rect')
-        .attr('x', clampX1).attr('width', Math.max(2, clampX2 - clampX1))
-        .attr('y', 0).attr('height', ih)
-        .attr('fill', isRestless ? 'rgba(239,68,68,0.12)' : 'rgba(45,212,191,0.10)')
-        .attr('rx', 3)
-    })
-
-    // Peak point marker — label on hover only
-    points.forEach(n => {
-      const cx = xS(new Date(n.t)), cy = yScale(n.v)
-      if (cx < 0 || cx > iw) return
-      const grp = anomLayer.append('g').attr('class', 'notable-point').style('cursor', 'pointer')
-      grp.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 8)
-        .attr('fill', 'none').attr('stroke', '#fca5a5').attr('stroke-width', 1.5).attr('opacity', 0.5)
-      grp.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 4)
-        .attr('fill', '#ef4444').attr('stroke', '#fff').attr('stroke-width', 0.8)
-      const label = grp.append('g').attr('class', 'notable-label').style('opacity', 0).style('pointer-events', 'none')
-      const txtY = cy - 16
-      label.append('rect')
-        .attr('x', cx - 34).attr('y', txtY - 10).attr('width', 68).attr('height', 16)
-        .attr('fill', 'rgba(26,29,39,0.9)').attr('stroke', '#ef4444').attr('stroke-width', 0.5).attr('rx', 4)
-      label.append('text')
-        .attr('x', cx).attr('y', txtY)
-        .attr('fill', '#ef4444').attr('font-size', '10px').attr('font-weight', '600')
-        .attr('text-anchor', 'middle').attr('dominant-baseline', 'middle').text(n.label)
-      grp.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 14)
-        .attr('fill', 'transparent')
-      grp.on('mouseenter', () => label.transition().duration(150).style('opacity', 1))
-      grp.on('mouseleave', () => label.transition().duration(150).style('opacity', 0))
-    })
   }
 }
 
@@ -339,8 +255,6 @@ watch(() => props.items, update, { deep: true })
 .leg-line { width: 16px; height: 3px; border-radius: 2px; }
 .leg-bar { width: 10px; height: 12px; border-radius: 2px; }
 .leg-dash { width: 16px; height: 0; border-top: 2px dashed; }
-.leg-dot { width: 8px; height: 8px; border-radius: 50%; }
-.leg-zone { width: 14px; height: 12px; border-radius: 2px; }
 .d3-tooltip { display: none; position: absolute; background: rgba(26,29,39,0.95); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 11px; color: var(--text); pointer-events: none; z-index: 10; white-space: nowrap; }
 .stage-toggle { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; cursor: pointer; margin-left: auto; transition: all 0.2s; }
 .stage-toggle:hover { border-color: var(--accent); color: var(--text); }

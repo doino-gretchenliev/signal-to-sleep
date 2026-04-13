@@ -2,7 +2,6 @@
 # ─────────────────────────────────────────────────────────────
 #
 #  Granular targets (use individually):
-#    make certs          generate TLS certs (if missing)
 #    make build          docker compose build
 #    make up             docker compose up -d
 #    make down           docker compose stop
@@ -16,9 +15,9 @@
 #    make logs-mqtt      tail only the mosquitto log
 #
 #  Combo targets (compose the above):
-#    make demo-start     certs + build + up + seed + stream + open
+#    make demo-start     build + up + seed + stream + open
 #    make demo-stop      down
-#    make demo-destroy   down + remove volumes + remove certs
+#    make demo-destroy   down + remove volumes
 #
 #  Local dev (no Docker):
 #    make venv           create .venv
@@ -37,7 +36,6 @@ COMPOSE      := docker compose
 COMPOSE_FILE := $(PROJECT_DIR)/docker-compose.yml
 BACKEND_SERVICE := backend
 MQTT_SERVICE := mosquitto
-CERT_DIR     := $(PROJECT_DIR)/mosquitto/certs
 VENV_DIR     := $(PROJECT_DIR)/.venv
 PYTHON       := $(VENV_DIR)/bin/python
 PIP          := $(VENV_DIR)/bin/pip
@@ -57,7 +55,7 @@ else
   OPEN := start
 endif
 
-.PHONY: certs build up down seed stream stream-stop analyze open status logs logs-app logs-mqtt \
+.PHONY: init build up down seed stream stream-stop analyze open status logs logs-app logs-mqtt \
         start stop sniff _print-mqtt \
         demo-start demo-stop demo-destroy \
         venv install dev dev-stop \
@@ -69,14 +67,32 @@ endif
 # Granular targets — Docker
 # ═════════════════════════════════════════════════════════════
 
-# ── certs ─────────────────────────────────────────────────
-certs:
-	@if [ -f "$(CERT_DIR)/ca.crt" ] && [ -f "$(CERT_DIR)/server.crt" ]; then \
-		echo "  ✓ TLS certs already exist"; \
+# ── init (first-time setup) ───────────────────────────────
+# Generates .env with a random MQTT password and creates mosquitto/passwd.
+# Safe to run multiple times — skips if .env already has a password set.
+init:
+	@if [ -f .env ] && grep -q '^MQTT_PASSWORD=.\+' .env 2>/dev/null; then \
+		echo "  ✓ Already initialized (.env has MQTT_PASSWORD set)"; \
 	else \
-		echo "  → Generating TLS certificates …"; \
-		bash backend/scripts/generate_certs.sh; \
-		echo "    ✓ Certs created in mosquitto/certs/"; \
+		PASS=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24); \
+		echo "  → Generating .env with random MQTT password …"; \
+		cp .env.example .env; \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			sed -i '' "s/^MQTT_PASSWORD=$$/MQTT_PASSWORD=$$PASS/" .env; \
+		else \
+			sed -i "s/^MQTT_PASSWORD=$$/MQTT_PASSWORD=$$PASS/" .env; \
+		fi; \
+		USER=$$(grep '^MQTT_USERNAME=' .env | cut -d= -f2); \
+		echo "$$USER:$$PASS" > mosquitto/passwd; \
+		echo "    ✓ .env created"; \
+		echo "    ✓ mosquitto/passwd created"; \
+		echo ""; \
+		echo "  ┌─────────────────────────────────────────────┐"; \
+		echo "  │  MQTT credentials (save these!)             │"; \
+		echo "  │                                             │"; \
+		echo "  │  Username:  $$USER"; \
+		echo "  │  Password:  $$PASS"; \
+		echo "  └─────────────────────────────────────────────┘"; \
 	fi
 	@echo ""
 
@@ -191,7 +207,7 @@ sniff: _wait-healthy
 # ═════════════════════════════════════════════════════════════
 
 # ── start (clean, no seed data — for real Apple Watch use) ──
-start: certs build up _wait-healthy open _print-mqtt
+start: init build up _wait-healthy open _print-mqtt
 
 _print-mqtt:
 	@HOST_IP=$$(python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.connect(('8.8.8.8',80)); print(s.getsockname()[0]); s.close()" 2>/dev/null || echo "localhost"); \
@@ -204,14 +220,12 @@ _print-mqtt:
 	echo "  └─────────────────────────────────────────────┘"; \
 	echo ""; \
 	echo "  ── Sensor Logger MQTT Settings ──────────────────"; \
-	echo "  Protocol:   wss (WebSocket + TLS)"; \
+	echo "  Connection: WebSocket"; \
 	echo "  Host:       $$HOST_IP"; \
-	echo "  Port:       8884"; \
+	echo "  Port:       1884"; \
 	echo "  Topic:      $$MQTT_TOPIC"; \
 	echo "  Username:   $$MQTT_USER"; \
 	echo "  Password:   $$MQTT_PASS"; \
-	echo "  URL:        wss://$$HOST_IP:8884"; \
-	echo "  TLS:        Accept self-signed certs"; \
 	echo "  ─────────────────────────────────────────────────"; \
 	echo ""; \
 	echo "  make status   → health & containers"; \
@@ -223,7 +237,7 @@ _print-mqtt:
 stop: down
 
 # ── demo-start (with seed data) ───────────────────────────
-demo-start: certs build up open seed stream
+demo-start: init build up open seed stream
 	@echo "  ┌─────────────────────────────────────────────┐"
 	@echo "  │  Dashboard: $(DASHBOARD)            │"
 	@echo "  │                                             │"
@@ -245,9 +259,6 @@ demo-stop: stream-stop down
 demo-destroy:
 	@echo "  → Tearing down containers and volumes …"
 	@$(COMPOSE) down -v
-	@echo "  → Removing generated certs …"
-	@rm -rf "$(CERT_DIR)"
-	@mkdir -p "$(CERT_DIR)"
 	@echo "    ✓ Clean slate"
 	@echo ""
 
@@ -283,7 +294,6 @@ dev: install
 	@echo "  → Starting dev server on port $(PORT) (no MQTT) …"
 	@cd "$(PROJECT_DIR)" && \
 		DATABASE_PATH="$(PROJECT_DIR)/db/sleep_data.db" \
-		MQTT_USE_TLS=false \
 		WEB_PORT=$(PORT) \
 		nohup "$(PYTHON)" -m uvicorn server:app \
 			--host 127.0.0.1 --port $(PORT) --reload \

@@ -8,11 +8,13 @@ db/
 # Credentials — never commit these
 .env
 mosquitto/passwd
-mosquitto/certs/
 
 # Demo runtime
 .demo.pid
 .demo.log
+
+# OS
+.DS_Store
 
 # IDE
 .vscode/

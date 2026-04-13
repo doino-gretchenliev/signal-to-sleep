@@ -5,6 +5,7 @@
       <TimeBar />
       <PeriodsList />
       <div v-if="selectedAnalyses.length" id="dashboard-content">
+        <DailySummary :analyses="selectedAnalyses" />
         <div class="chart-panel arch-panel">
           <h3>Sleep Timeline</h3>
           <SleepArchChart :items="selectedItems" />
@@ -12,6 +13,7 @@
         </div>
         <ScoreCards :analyses="selectedAnalyses" />
         <VitalCards :analyses="selectedAnalyses" />
+        <SleepMetricsCards :analyses="selectedAnalyses" />
         <div class="chart-panel">
           <h3>Energy Bank</h3>
           <EnergyBankChart :analyses="selectedAnalyses" />
@@ -51,6 +53,7 @@
         <p>Pick a time range above, then click a detected sleep period to view its analysis.</p>
       </div>
     </div>
+    <footer class="app-footer">Made by Gretch. {{ new Date().getFullYear() }}</footer>
   </div>
 </template>
 
@@ -61,6 +64,8 @@ import TimeBar from './components/TimeBar.vue'
 import PeriodsList from './components/PeriodsList.vue'
 import ScoreCards from './components/ScoreCards.vue'
 import VitalCards from './components/VitalCards.vue'
+import SleepMetricsCards from './components/SleepMetricsCards.vue'
+import DailySummary from './components/DailySummary.vue'
 import SleepStageBar from './components/SleepStageBar.vue'
 import VitalsGrid from './components/VitalsGrid.vue'
 import EnergyBankChart from './components/charts/EnergyBankChart.vue'
@@ -96,6 +101,15 @@ const coveragePct = computed(() => {
 </script>
 
 <style scoped>
+.app-footer {
+  text-align: center;
+  padding: 24px 0;
+  margin-top: auto;
+  font-size: 13px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
 .app {
   display: flex;
   flex-direction: column;

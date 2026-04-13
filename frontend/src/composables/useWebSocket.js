@@ -38,7 +38,6 @@ function connect() {
   ws.onopen = () => {
     connected.value = true
     backoff = 1000
-    console.log('[WS] connected')
   }
 
   ws.onmessage = (ev) => {
@@ -69,7 +68,6 @@ function connect() {
     connected.value = false
     health.db = false
     health.mqtt = false
-    console.log(`[WS] disconnected, reconnecting in ${backoff}ms`)
     scheduleReconnect()
   }
 

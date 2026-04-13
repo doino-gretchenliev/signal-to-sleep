@@ -22,23 +22,19 @@ Options:
 
 import os
 import sys
-import ssl
 import json
 import signal
 import argparse
 from datetime import datetime
-from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
 # ── Config (same env vars as backend) ─────────────────────
 
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "mosquitto")
-MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))
+MQTT_PORT = int(os.environ.get("MQTT_PORT", "1884"))
 MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "")
 MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
-MQTT_USE_TLS = os.environ.get("MQTT_USE_TLS", "true").lower() in ("true", "1", "yes")
-MQTT_CA_CERT = os.environ.get("MQTT_CA_CERT", "/app/mosquitto/certs/ca.crt")
 
 _running = True
 _count = 0
@@ -131,7 +127,6 @@ def main():
 
     print(f"Signal-to-Sleep — MQTT Sniffer")
     print(f"  Broker:   {MQTT_BROKER}:{MQTT_PORT}")
-    print(f"  TLS:      {MQTT_USE_TLS}")
     print(f"  Username: {MQTT_USERNAME}")
     print(f"  Topic:    {args.topic}")
     if args.count:
@@ -141,20 +136,12 @@ def main():
     client = mqtt.Client(
         client_id="signal-to-sleep-sniffer",
         protocol=mqtt.MQTTv311,
-        transport="tcp",
+        transport="websockets",
         userdata={"topic": args.topic, "raw": args.raw},
     )
 
     if MQTT_USERNAME:
         client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-
-    if MQTT_USE_TLS:
-        ca_path = MQTT_CA_CERT
-        if Path(ca_path).exists():
-            client.tls_set(ca_certs=ca_path, tls_version=ssl.PROTOCOL_TLSv1_2)
-            client.tls_insecure_set(True)
-        else:
-            print(f"WARNING: CA cert not found at {ca_path}")
 
     client.on_connect = on_connect
     client.on_message = on_message

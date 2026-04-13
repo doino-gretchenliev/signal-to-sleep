@@ -283,11 +283,13 @@ def detect_sleep_periods(
 
         if overlaps_id:
             # Update existing period's end time if it grew —
-            # but never touch manual periods (controlled by annotations)
+            # but never touch manual or already-finalized periods.
             for ep in existing:
                 if ep.period_id == overlaps_id:
                     if getattr(ep, "source", "auto") == "manual":
                         break  # manual periods are managed by annotations
+                    if ep.is_final:
+                        break  # finalized periods must not be extended
                     if e_ns > ep.end_ns:
                         ep.end_ns = e_ns
                         ep.ended_at = _ns_to_dt(e_ns)
@@ -339,16 +341,37 @@ def run_detection_for_all_sessions(db: DBSession) -> list[SleepPeriod]:
 
     for s in sessions:
         try:
-            # Find the latest period end for this session so we only scan new data
-            latest_end = (
+            # Find the latest finalized period end — never re-scan past it
+            latest_final_end = (
                 db.query(func.max(SleepPeriod.end_ns))
-                .filter(SleepPeriod.session_id == s.session_id)
+                .filter(
+                    SleepPeriod.session_id == s.session_id,
+                    SleepPeriod.is_final == True,  # noqa: E712
+                )
                 .scalar()
             )
-            # Overlap buffer: go back 30 min to allow merging with recent periods
+            # Find the latest non-final (open) period end — allow overlap buffer
+            latest_open_end = (
+                db.query(func.max(SleepPeriod.end_ns))
+                .filter(
+                    SleepPeriod.session_id == s.session_id,
+                    SleepPeriod.is_final == False,  # noqa: E712
+                )
+                .scalar()
+            )
+
             since_ns = None
-            if latest_end:
-                since_ns = latest_end - (MERGE_GAP_MIN * 60 * 1_000_000_000)
+            if latest_final_end and latest_open_end:
+                # Both exist: scan from whichever is later, but only use
+                # the overlap buffer for the open period's boundary
+                open_scan = latest_open_end - (MERGE_GAP_MIN * 60 * 1_000_000_000)
+                since_ns = max(latest_final_end, open_scan)
+            elif latest_final_end:
+                # Only finalized periods — scan strictly after them
+                since_ns = latest_final_end
+            elif latest_open_end:
+                # Only open periods — use overlap buffer to allow merging
+                since_ns = latest_open_end - (MERGE_GAP_MIN * 60 * 1_000_000_000)
 
             new = detect_sleep_periods(db, s.session_id, since_ns=since_ns)
             all_new.extend(new)

@@ -6,15 +6,13 @@ and provides a command publisher to control Sensor Logger remotely
 via its Rule Engine.
 
 Connection architecture:
-- Sensor Logger -> WSS (WebSocket + TLS) on port 8884 -> Mosquitto
-- Python server -> TCP + TLS on port 8883 -> Mosquitto
+- Sensor Logger -> WebSocket on port 1884 -> Mosquitto
+- Python server -> WebSocket on port 1884 -> Mosquitto
 - Both authenticate with username/password
-- All traffic encrypted with TLS 1.2+
 """
 
 import os
 import re
-import ssl
 import json
 import time
 import uuid
@@ -22,7 +20,6 @@ import logging
 import threading
 from datetime import datetime
 from typing import Any, Callable
-from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
@@ -33,13 +30,11 @@ logger: logging.Logger = logging.getLogger("signal-to-sleep.mqtt")
 # ── Configuration ──────────────────────────────────────────
 
 MQTT_BROKER: str = os.environ.get("MQTT_BROKER", "localhost")
-MQTT_PORT: int = int(os.environ.get("MQTT_PORT", "8883"))
+MQTT_PORT: int = int(os.environ.get("MQTT_PORT", "1884"))
 MQTT_TOPIC: str = os.environ.get("MQTT_TOPIC", "sensor-logger")
 MQTT_COMMAND_TOPIC: str = os.environ.get("MQTT_COMMAND_TOPIC", "sensor-logger/command")
 MQTT_USERNAME: str = os.environ.get("MQTT_USERNAME", "")
 MQTT_PASSWORD: str = os.environ.get("MQTT_PASSWORD", "")
-MQTT_USE_TLS: bool = os.environ.get("MQTT_USE_TLS", "true").lower() in ("true", "1", "yes")
-MQTT_CA_CERT: str = os.environ.get("MQTT_CA_CERT", "/app/mosquitto/certs/ca.crt")
 MQTT_QOS: int = 0
 
 
@@ -53,29 +48,13 @@ class SensorMQTTClient:
         self.client: mqtt.Client = mqtt.Client(
             client_id="signal-to-sleep-server",
             protocol=mqtt.MQTTv311,
-            transport="tcp",
+            transport="websockets",
         )
 
         # ── Authentication ─────────────────────────────────
         if MQTT_USERNAME:
             self.client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
             logger.info(f"MQTT auth configured for user '{MQTT_USERNAME}'")
-
-        # ── TLS Encryption ─────────────────────────────────
-        if MQTT_USE_TLS:
-            ca_cert_path: str = MQTT_CA_CERT
-            if Path(ca_cert_path).exists():
-                self.client.tls_set(
-                    ca_certs=ca_cert_path,
-                    tls_version=ssl.PROTOCOL_TLSv1_2,
-                )
-                self.client.tls_insecure_set(True)  # Self-signed certs
-                logger.info(f"TLS enabled with CA cert: {ca_cert_path}")
-            else:
-                logger.warning(
-                    f"TLS requested but CA cert not found at {ca_cert_path}. "
-                    f"Falling back to unencrypted connection."
-                )
 
         self.connected: bool = False
         self.message_count: int = 0
@@ -431,7 +410,6 @@ class SensorMQTTClient:
                 "broker": f"{MQTT_BROKER}:{MQTT_PORT}",
                 "topic": MQTT_TOPIC,
                 "command_topic": MQTT_COMMAND_TOPIC,
-                "tls_enabled": MQTT_USE_TLS,
                 "auth_enabled": bool(MQTT_USERNAME),
                 "auth_user": MQTT_USERNAME if MQTT_USERNAME else None,
                 "message_count": self.message_count,

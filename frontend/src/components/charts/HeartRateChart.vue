@@ -4,6 +4,7 @@
     <div class="chart-legend">
       <template v-if="items.length === 1">
         <span class="leg-item"><span class="leg-line" style="background:#60a5fa"></span>Heart Rate</span>
+        <span class="leg-item"><span class="leg-band"></span>Range</span>
         <span class="leg-item"><span class="leg-dash" style="border-color:#8b8fa3"></span>Average</span>
         <span class="leg-item"><span class="leg-dot" style="background:#ef4444"></span>Peak</span>
         <span class="leg-item"><span class="leg-dot" style="background:#3b82f6"></span>Low</span>
@@ -75,6 +76,24 @@ function findNotablePoints(series) {
   return points
 }
 
+/** Compute rolling range band (local p20-p80) for background envelope */
+function computeRangeBand(series, windowSize = 15) {
+  if (series.length < 3) return []
+  const half = Math.floor(windowSize / 2)
+  const band = []
+  for (let i = 0; i < series.length; i++) {
+    const lo = Math.max(0, i - half)
+    const hi = Math.min(series.length - 1, i + half)
+    const window = []
+    for (let j = lo; j <= hi; j++) window.push(series[j].v)
+    window.sort((a, b) => a - b)
+    const p20idx = Math.floor(window.length * 0.2)
+    const p80idx = Math.min(window.length - 1, Math.floor(window.length * 0.8))
+    band.push({ t: series[i].t, lo: window[p20idx], hi: window[p80idx] })
+  }
+  return band
+}
+
 /** LTTB downsampling — keeps visual shape while reducing point count */
 function downsample(data, maxPts) {
   if (data.length <= maxPts) return data
@@ -135,6 +154,7 @@ function init() {
 
   g.append('g').attr('class', 'grid')
   g.append('g').attr('class', 'stage-bg')
+  g.append('g').attr('class', 'range-band')
   g.append('g').attr('class', 'data-layer')
   g.append('g').attr('class', 'avg-layer')
   g.append('g').attr('class', 'anomaly-layer')
@@ -224,6 +244,10 @@ function render(xS) {
     }
   }
 
+  // Range band — rolling p20-p80 envelope behind the line
+  const rangeBandLayer = g.select('.range-band')
+  rangeBandLayer.selectAll('*').remove()
+
   // Data lines — downsample for readability
   const maxPts = Math.max(300, iw)
   const dataLayer = g.select('.data-layer')
@@ -233,6 +257,30 @@ function render(xS) {
   if (single) {
     const raw = props.items[0].analysis.heart_rate_series || []
     const data = downsample(raw, maxPts)
+
+    // Render range band
+    const band = computeRangeBand(data, Math.max(10, Math.floor(data.length / 12)))
+    if (band.length > 2) {
+      const area = d3.area()
+        .x(d => xS(new Date(d.t)))
+        .y0(d => yScale(d.lo))
+        .y1(d => yScale(d.hi))
+        .curve(d3.curveMonotoneX)
+
+      // Outer band — very subtle wide glow
+      rangeBandLayer.append('path').datum(band).attr('d',
+        d3.area()
+          .x(d => xS(new Date(d.t)))
+          .y0(d => yScale(d.lo - (d.hi - d.lo) * 0.3))
+          .y1(d => yScale(d.hi + (d.hi - d.lo) * 0.3))
+          .curve(d3.curveMonotoneX)
+      ).attr('fill', 'rgba(96, 165, 250, 0.05)')
+
+      // Inner band — main p20-p80 range
+      rangeBandLayer.append('path').datum(band).attr('d', area)
+        .attr('fill', 'rgba(96, 165, 250, 0.12)')
+    }
+
     dataLayer.append('path').datum(data).attr('d', line)
       .attr('fill', 'none').attr('stroke', '#60a5fa').attr('stroke-width', 1.5).attr('opacity', 0.9)
   } else {
@@ -314,6 +362,7 @@ watch(() => props.items, update, { deep: true })
 .leg-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); }
 .leg-line { width: 16px; height: 3px; border-radius: 2px; }
 .leg-dash { width: 16px; height: 0; border-top: 2px dashed; }
+.leg-band { width: 16px; height: 10px; border-radius: 3px; background: rgba(96, 165, 250, 0.25); }
 .leg-dot { width: 8px; height: 8px; border-radius: 50%; }
 .d3-tooltip { display: none; position: absolute; background: rgba(26,29,39,0.95); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 11px; color: var(--text); pointer-events: none; z-index: 10; white-space: nowrap; }
 .stage-toggle { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; cursor: pointer; margin-left: auto; transition: all 0.2s; }

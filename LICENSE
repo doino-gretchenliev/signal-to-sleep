@@ -1,0 +1,28 @@
+Signal-to-Sleep - Non-Commercial License
+
+Copyright (c) 2024 Doino Gretchenliev
+
+This software is licensed under the GNU General Public License v3.0
+(GPLv3) with the following additional restriction:
+
+  NON-COMMERCIAL USE ONLY
+
+  You may NOT use this software, or any derivative work, for commercial
+  purposes without prior written permission from the copyright holder.
+
+  "Commercial purposes" includes, but is not limited to:
+    - Selling the software or any derivative work
+    - Offering the software as a paid service (SaaS, hosted, or otherwise)
+    - Using the software in a product or service that generates revenue
+    - Providing paid consulting, support, or hosting services built
+      around this software
+
+  For commercial licensing inquiries, contact the copyright holder.
+
+All other terms of the GPLv3 apply in full. You are free to use, modify,
+and redistribute this software for personal, educational, and
+non-commercial purposes, provided that any derivative work is also
+distributed under this same license (GPLv3 + non-commercial restriction).
+
+The full text of the GNU General Public License v3.0 is available at:
+https://www.gnu.org/licenses/gpl-3.0.html
