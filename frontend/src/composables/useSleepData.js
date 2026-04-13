@@ -30,8 +30,6 @@ export function useSleepData(rangeStart, rangeEnd) {
   useWebSocket(async (event) => {
     if (event.type === 'health_update') return // handled by useWebSocket internally
 
-    console.log('[WS] event:', event.type)
-
     if (event.type === 'periods_detected' || event.type === 'data_refresh') {
       await reloadPeriods()
       await autoSelectAnalyzed()
@@ -133,7 +131,7 @@ export function useSleepData(rangeStart, rangeEnd) {
   let analyzeTimeout = null
 
   async function analyzePeriod(id) {
-    if (analyzing.value === id) return // already analyzing this one
+    if (analyzing.value) return // one analysis at a time (any period)
     analyzing.value = id
 
     // Safety timeout: if no WS completion after 5 min, clear the spinner
@@ -155,8 +153,7 @@ export function useSleepData(rangeStart, rangeEnd) {
         // The timeout above will clear it eventually
         return
       }
-      const data = await res.json()
-      console.log(`[Analyze] ${data.status} for ${id}`)
+      await res.json()
     } catch (e) {
       console.error('Analysis request failed:', e)
       // Network error — server might be down. Keep spinner, timeout will clear it.

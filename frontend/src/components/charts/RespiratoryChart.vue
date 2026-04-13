@@ -4,8 +4,8 @@
     <div class="chart-legend">
       <template v-if="items.length === 1">
         <span class="leg-item"><span class="leg-line" style="background:#34d399"></span>Respiratory Rate</span>
+        <span class="leg-item"><span class="leg-band"></span>Range</span>
         <span class="leg-item"><span class="leg-dash" style="border-color:#8b8fa3"></span>Average</span>
-        <span class="leg-item"><span class="leg-dot" style="background:#ef4444"></span>Anomaly</span>
       </template>
       <template v-else>
         <span v-for="(item, i) in items" :key="i" class="leg-item">
@@ -36,10 +36,22 @@ function periodLabel(p) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + p.sleep_type
 }
 
-function detectAnomalies(series, sigma = 2.0) {
-  const vals = series.map(d => d.v)
-  const mean = d3.mean(vals), std = d3.deviation(vals) || 1
-  return series.filter(d => Math.abs((d.v - mean) / std) > sigma)
+/** Compute rolling range band (local p20-p80) for background envelope */
+function computeRangeBand(series, windowSize = 15) {
+  if (series.length < 3) return []
+  const half = Math.floor(windowSize / 2)
+  const band = []
+  for (let i = 0; i < series.length; i++) {
+    const lo = Math.max(0, i - half)
+    const hi = Math.min(series.length - 1, i + half)
+    const window = []
+    for (let j = lo; j <= hi; j++) window.push(series[j].v)
+    window.sort((a, b) => a - b)
+    const p20idx = Math.floor(window.length * 0.2)
+    const p80idx = Math.min(window.length - 1, Math.floor(window.length * 0.8))
+    band.push({ t: series[i].t, lo: window[p20idx], hi: window[p80idx] })
+  }
+  return band
 }
 
 function downsample(data, maxPts) {
@@ -98,10 +110,10 @@ function init() {
   yScale = d3.scaleLinear().range([ih, 0])
 
   g.append('g').attr('class', 'grid')
+  g.append('g').attr('class', 'range-band')
   g.append('g').attr('class', 'area-layer')
   g.append('g').attr('class', 'data-layer')
   g.append('g').attr('class', 'avg-layer')
-  g.append('g').attr('class', 'anomaly-layer')
 
   const ch = rootG.append('g').attr('class', 'crosshair').style('display', 'none')
   ch.append('line').attr('y1', 0).attr('y2', ih).attr('stroke', '#7c6ef0').attr('stroke-dasharray', '3,3').attr('stroke-width', 1)
@@ -161,6 +173,10 @@ function render(xS) {
     .attr('x1', 0).attr('x2', iw).attr('y1', d => yScale(d)).attr('y2', d => yScale(d))
     .attr('stroke', 'rgba(255,255,255,0.05)')
 
+  // Range band
+  const rangeBandLayer = g.select('.range-band')
+  rangeBandLayer.selectAll('*').remove()
+
   const maxPts = Math.max(300, iw)
   const areaLayer = g.select('.area-layer')
   areaLayer.selectAll('*').remove()
@@ -168,12 +184,36 @@ function render(xS) {
   dataLayer.selectAll('*').remove()
 
   const line = d3.line().x(d => xS(new Date(d.t))).y(d => yScale(d.v)).curve(d3.curveMonotoneX)
-  const area = d3.area().x(d => xS(new Date(d.t))).y0(ih).y1(d => yScale(d.v)).curve(d3.curveMonotoneX)
+  const areaGen = d3.area().x(d => xS(new Date(d.t))).y0(ih).y1(d => yScale(d.v)).curve(d3.curveMonotoneX)
 
   if (single) {
     const raw = props.items[0].analysis.respiratory_series || []
     const data = downsample(raw, maxPts)
-    areaLayer.append('path').datum(data).attr('d', area).attr('fill', 'url(#resp-grad)')
+
+    // Render range band
+    const band = computeRangeBand(data, Math.max(10, Math.floor(data.length / 12)))
+    if (band.length > 2) {
+      const bandArea = d3.area()
+        .x(d => xS(new Date(d.t)))
+        .y0(d => yScale(d.lo))
+        .y1(d => yScale(d.hi))
+        .curve(d3.curveMonotoneX)
+
+      // Outer glow
+      rangeBandLayer.append('path').datum(band).attr('d',
+        d3.area()
+          .x(d => xS(new Date(d.t)))
+          .y0(d => yScale(d.lo - (d.hi - d.lo) * 0.3))
+          .y1(d => yScale(d.hi + (d.hi - d.lo) * 0.3))
+          .curve(d3.curveMonotoneX)
+      ).attr('fill', 'rgba(52, 211, 153, 0.05)')
+
+      // Inner band
+      rangeBandLayer.append('path').datum(band).attr('d', bandArea)
+        .attr('fill', 'rgba(52, 211, 153, 0.12)')
+    }
+
+    areaLayer.append('path').datum(data).attr('d', areaGen).attr('fill', 'url(#resp-grad)')
     dataLayer.append('path').datum(data).attr('d', line)
       .attr('fill', 'none').attr('stroke', '#34d399').attr('stroke-width', 1.5).attr('opacity', 0.9)
   } else {
@@ -197,21 +237,6 @@ function render(xS) {
       .attr('fill', 'rgba(255,255,255,0.5)').attr('font-size', '10px').attr('text-anchor', 'end')
       .text(`avg ${avgVal.toFixed(1)} br/min`)
   }
-
-  // Anomalies — red dots
-  const anomLayer = g.select('.anomaly-layer')
-  anomLayer.selectAll('*').remove()
-  if (single) {
-    const raw = props.items[0].analysis.respiratory_series || []
-    const anoms = detectAnomalies(raw)
-    anoms.forEach(a => {
-      const cx = xS(new Date(a.t)), cy = yScale(a.v)
-      if (cx >= 0 && cx <= iw) {
-        anomLayer.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 4)
-          .attr('fill', '#ef4444').attr('opacity', 0.85).attr('stroke', '#fff').attr('stroke-width', 0.5)
-      }
-    })
-  }
 }
 
 function update() { if (g) render() }
@@ -228,6 +253,6 @@ watch(() => props.items, update, { deep: true })
 .leg-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); }
 .leg-line { width: 16px; height: 3px; border-radius: 2px; }
 .leg-dash { width: 16px; height: 0; border-top: 2px dashed; }
-.leg-dot { width: 8px; height: 8px; border-radius: 50%; }
+.leg-band { width: 16px; height: 10px; border-radius: 3px; background: rgba(52, 211, 153, 0.25); }
 .d3-tooltip { display: none; position: absolute; background: rgba(26,29,39,0.95); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 11px; color: var(--text); pointer-events: none; z-index: 10; white-space: nowrap; }
 </style>

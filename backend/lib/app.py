@@ -215,14 +215,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Print Sensor Logger connection info
     _host_ip = _get_host_ip()
     logger.info(f"  ── Sensor Logger MQTT Settings ──")
-    logger.info(f"  Protocol:         wss (WebSocket + TLS)")
+    logger.info(f"  Connection:       WebSocket")
     logger.info(f"  Host:             {_host_ip}")
-    logger.info(f"  Port:             8884")
+    logger.info(f"  Port:             1884")
     logger.info(f"  Topic:            {MQTT_TOPIC}")
     logger.info(f"  Username:         {os.environ.get('MQTT_USERNAME', '')}")
-    logger.info(f"  Password:         {os.environ.get('MQTT_PASSWORD', '')}")
-    logger.info(f"  URL:              wss://{_host_ip}:8884")
-    logger.info(f"  TLS:              Accept self-signed certs")
 
     yield
 
@@ -459,6 +456,12 @@ def create_app() -> FastAPI:
             "respiratory_series": json.loads(analysis.respiratory_series or "[]"),
             "noise_series": json.loads(getattr(analysis, "noise_series", None) or "[]"),
             "data_coverage": getattr(analysis, "data_coverage", 1.0) or 1.0,
+            "onset_latency_min": getattr(analysis, "onset_latency_min", None),
+            "waso_min": getattr(analysis, "waso_min", None),
+            "num_awakenings": getattr(analysis, "num_awakenings", None),
+            "fragmentation_index": getattr(analysis, "fragmentation_index", None),
+            "time_to_deep_min": getattr(analysis, "time_to_deep_min", None),
+            "time_to_rem_min": getattr(analysis, "time_to_rem_min", None),
         }
 
     # ── Background analysis runner ─────────────────────
@@ -511,6 +514,10 @@ def create_app() -> FastAPI:
 
         if period_id in _analyzing:
             return {"status": "already_running", "period_id": period_id}
+
+        if _analyzing:
+            running = next(iter(_analyzing))
+            return {"status": "busy", "period_id": period_id, "running": running}
 
         _analyzing.add(period_id)
         t = threading.Thread(
@@ -725,6 +732,12 @@ def create_app() -> FastAPI:
         if changed:
             dur_min = (period.end_ns - period.start_ns) / (60 * 1e9)
             period.duration_min = round(dur_min, 1)
+            # Delete stale analysis — times changed so it needs re-analysis
+            old_analysis = db.query(SleepAnalysis).filter(
+                SleepAnalysis.period_id == period_id
+            ).first()
+            if old_analysis:
+                db.delete(old_analysis)
             db.commit()
             logger.info(f"[API] Period updated: {period_id} → {period.sleep_type} {dur_min:.1f}min")
             await ws_manager.broadcast({

@@ -25,7 +25,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.signal import medfilt
 from sqlalchemy.orm import Session as DBSession
 from lib.db.database import SensorReading, SleepAnalysis, SleepPeriod
 
@@ -789,13 +788,22 @@ def run_analysis(db: DBSession, session_id: str, period: SleepPeriod | None = No
     )
 
     # Sleep quality score
+    n_awakenings: int = count_awakenings(stage_series)
     sleep_quality: float = compute_quality_score(
         sleep_efficiency=sleep_efficiency,
         deep_pct=stage_counts["deep"] / total_duration_min * 100 if total_duration_min > 0 else 0,
         rem_pct=stage_counts["rem"] / total_duration_min * 100 if total_duration_min > 0 else 0,
-        awakenings=count_awakenings(stage_series),
+        awakenings=n_awakenings,
         total_duration_min=total_duration_min,
     )
+
+    # ── New sleep metrics ──────────────────────────────────
+    onset_latency_min: float | None = compute_sleep_onset_latency(stage_series, start_ns)
+    waso_min: float = compute_waso(stage_series)
+    sleep_total_min: float = stage_counts["light"] + stage_counts["deep"] + stage_counts["rem"]
+    fragmentation_index: float | None = compute_fragmentation_index(n_awakenings, sleep_total_min)
+    time_to_deep_min: float | None = compute_latency_to_stage(stage_series, "deep")
+    time_to_rem_min: float | None = compute_latency_to_stage(stage_series, "rem")
 
     # Apply coverage penalty to quality scores
     if coverage_penalty < 1.0:
@@ -839,6 +847,12 @@ def run_analysis(db: DBSession, session_id: str, period: SleepPeriod | None = No
         respiratory_series=json.dumps(resp_chart),
         noise_series=json.dumps(noise_chart),
         data_coverage=round(data_coverage, 3),
+        onset_latency_min=round(onset_latency_min, 1) if onset_latency_min is not None else None,
+        waso_min=round(waso_min, 1),
+        num_awakenings=n_awakenings,
+        fragmentation_index=round(fragmentation_index, 2) if fragmentation_index is not None else None,
+        time_to_deep_min=round(time_to_deep_min, 1) if time_to_deep_min is not None else None,
+        time_to_rem_min=round(time_to_rem_min, 1) if time_to_rem_min is not None else None,
     )
 
     db.add(analysis)
@@ -955,6 +969,69 @@ def count_awakenings(stage_series: list[dict[str, Any]]) -> int:
             awakenings += 1
         prev_stage = s["stage"]
     return awakenings
+
+
+def compute_sleep_onset_latency(stage_series: list[dict[str, Any]], period_start_ns: int) -> float | None:
+    """Minutes from period start to first non-awake epoch."""
+    for s in stage_series:
+        if s["stage"] != "awake":
+            return max(0.0, (s["time"] - period_start_ns) / (60 * 1e9))
+    return None  # never fell asleep
+
+
+def compute_waso(stage_series: list[dict[str, Any]], epoch_duration_sec: float = EPOCH_DURATION_SEC) -> float:
+    """Wake After Sleep Onset — total awake minutes after first sleep epoch, excluding final wake."""
+    # Find first sleep epoch
+    first_sleep_idx: int | None = None
+    for i, s in enumerate(stage_series):
+        if s["stage"] != "awake":
+            first_sleep_idx = i
+            break
+    if first_sleep_idx is None:
+        return 0.0
+
+    # Find last sleep epoch
+    last_sleep_idx: int = first_sleep_idx
+    for i in range(len(stage_series) - 1, first_sleep_idx, -1):
+        if stage_series[i]["stage"] != "awake":
+            last_sleep_idx = i
+            break
+
+    # Sum awake epochs between first and last sleep
+    epoch_min: float = epoch_duration_sec / 60
+    waso: float = 0.0
+    for i in range(first_sleep_idx, last_sleep_idx + 1):
+        if stage_series[i]["stage"] == "awake":
+            waso += epoch_min
+    return round(waso, 1)
+
+
+def compute_fragmentation_index(awakenings: int, total_sleep_min: float) -> float | None:
+    """Awakenings per hour of sleep."""
+    if total_sleep_min <= 0:
+        return None
+    return round(awakenings / (total_sleep_min / 60), 2)
+
+
+def compute_latency_to_stage(
+    stage_series: list[dict[str, Any]], target_stage: str
+) -> float | None:
+    """Minutes from first sleep epoch to first occurrence of target_stage."""
+    # Find first sleep time
+    first_sleep_ns: int | None = None
+    for s in stage_series:
+        if s["stage"] != "awake":
+            first_sleep_ns = s["time"]
+            break
+    if first_sleep_ns is None:
+        return None
+
+    # Find first target stage
+    for s in stage_series:
+        if s["stage"] == target_stage:
+            latency = (s["time"] - first_sleep_ns) / (60 * 1e9)
+            return round(max(0.0, latency), 1)
+    return None  # stage never occurred
 
 
 def downsample(series: list[dict[str, Any]], max_points: int) -> list[dict[str, Any]]:

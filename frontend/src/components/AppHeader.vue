@@ -2,7 +2,7 @@
   <header class="app-header">
     <div class="header-content">
       <div class="logo-section">
-        <h1><span class="accent">Signal</span>-to-Sleep</h1>
+        <img src="/logo-header.png" alt="Signal-to-Sleep" class="logo-img" />
       </div>
 
       <div class="health-section">
@@ -182,15 +182,12 @@ async function handleStop() {
   margin: 0 auto;
 }
 
-.logo-section h1 {
-  margin: 0;
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #e5e7eb;
-  letter-spacing: -0.5px;
+.logo-img {
+  height: 52px;
+  width: auto;
+  display: block;
+  object-fit: contain;
 }
-
-.accent { color: var(--accent); }
 
 .health-section {
   display: flex;
@@ -350,7 +347,7 @@ async function handleStop() {
 
 @media (max-width: 1024px) {
   .header-content { flex-direction: column; gap: 1rem; }
-  .logo-section h1 { font-size: 1.25rem; }
+  .logo-img { height: 44px; }
   .health-section { width: 100%; justify-content: flex-start; }
   .uptime-section { align-self: flex-start; }
 }
@@ -358,7 +355,7 @@ async function handleStop() {
 @media (max-width: 640px) {
   .app-header { padding: 0.75rem 1rem; }
   .header-content { gap: 0.5rem; }
-  .logo-section h1 { font-size: 1rem; }
+  .logo-img { height: 36px; }
   .badge, .uptime-section { font-size: 0.75rem; padding: 0.375rem 0.75rem; }
   .health-section { gap: 0.5rem; flex-wrap: wrap; }
 }

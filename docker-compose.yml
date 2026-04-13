@@ -1,20 +1,15 @@
 services:
-  # ── MQTT Broker (Secured) ────────────────────────────────
-  # Mosquitto with TLS + username/password authentication
-  #   - WSS on port 8884: Sensor Logger connects here
-  #   - TCP+TLS on port 8883: Python server connects here
-  #   - No plaintext listeners
+  # ── MQTT Broker ─────────────────────────────────────────
+  # Mosquitto with username/password authentication
+  #   - WebSocket on port 1884: all clients connect here
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: signal-to-sleep-mqtt
     ports:
-      - "8884:8884"   # WSS (TLS) — Sensor Logger
-      - "8885:8885"   # WS (no TLS) — Sensor Logger fallback
-      - "8883:8883"   # TCP+TLS — internal Python client
+      - "1884:1884"   # WebSocket — Sensor Logger + backend
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/passwd:/mosquitto/config/passwd
-      - ./mosquitto/certs:/mosquitto/certs:ro
       - ./mosquitto/entrypoint.sh:/entrypoint.sh:ro
       - mosquitto-data:/mosquitto/data
     entrypoint: /entrypoint.sh
@@ -22,11 +17,12 @@ services:
 
   # ── Signal-to-Sleep Backend API ─────────────────────────
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: signal-to-sleep-api
     volumes:
       - sleep-data:/app/db
-      - ./mosquitto/certs:/app/mosquitto/certs:ro
     env_file:
       - .env
     deploy:
@@ -45,7 +41,9 @@ services:
 
   # ── Signal-to-Sleep Frontend UI ─────────────────────────
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: signal-to-sleep-ui
     ports:
       - "8080:80"

@@ -20,13 +20,13 @@
     </div>
 
     <div class="score-card">
-      <div class="label">{{ single ? 'Total Time' : 'Avg Duration' }}</div>
+      <div class="label">{{ multi ? 'Total In Bed' : 'Total Time' }}</div>
       <div class="big-value">{{ totalDur }}</div>
-      <div class="sub">{{ single ? 'in bed' : 'per night' }}</div>
+      <div class="sub">{{ multi ? `${analyses.length} sessions combined` : 'in bed' }}</div>
     </div>
 
     <div class="score-card">
-      <div class="label">{{ single ? 'Time Asleep' : 'Avg Asleep' }}</div>
+      <div class="label">{{ multi ? 'Total Asleep' : 'Time Asleep' }}</div>
       <div class="big-value">{{ asleepDur }}</div>
       <div class="sub">actual sleep</div>
     </div>
@@ -55,9 +55,28 @@ function fmtDur(m) {
 }
 
 const single = computed(() => props.analyses.length === 1)
+const multi = computed(() => props.analyses.length > 1)
+
+function sum(arr) {
+  return arr.reduce((a, b) => a + b, 0)
+}
 
 const gauges = computed(() => {
   const aa = props.analyses || []
+  if (multi.value) {
+    // For multi-session: compute combined efficiency from summed values
+    const totalSleep = sum(aa.map(a => (a.light_sleep_min || 0) + (a.deep_sleep_min || 0) + (a.rem_sleep_min || 0)))
+    const totalInBed = sum(aa.map(a => a.total_duration_min || 0))
+    const efficiency = totalInBed > 0 ? Math.min(100, (totalSleep / totalInBed) * 100) : 0
+    // Scores are still averaged — they're qualitative per-session assessments
+    const recovery = mean(aa.map(a => a.recovery_score || 0))
+    const quality = mean(aa.map(a => a.sleep_quality_score || 0))
+    return [
+      { label: 'Avg Recovery', value: Math.round(recovery), color: scoreColor(recovery), offset: circumference - (Math.min(100, recovery) / 100) * circumference },
+      { label: 'Avg Quality', value: Math.round(quality), color: scoreColor(quality), offset: circumference - (Math.min(100, quality) / 100) * circumference },
+      { label: 'Combined Eff.', value: Math.round(efficiency), color: scoreColor(efficiency), offset: circumference - (Math.min(100, efficiency) / 100) * circumference },
+    ]
+  }
   const recovery = mean(aa.map(a => a.recovery_score || 0))
   const quality = mean(aa.map(a => a.sleep_quality_score || 0))
   const efficiency = Math.min(100, mean(aa.map(a => a.sleep_efficiency || 0)))
@@ -70,13 +89,19 @@ const gauges = computed(() => {
 
 const totalDur = computed(() => {
   const aa = props.analyses || []
-  const m = single.value ? aa[0]?.total_duration_min || 0 : mean(aa.map(a => a.total_duration_min || 0))
+  // Always sum when multi-session (total time in bed across all sessions)
+  const m = multi.value
+    ? sum(aa.map(a => a.total_duration_min || 0))
+    : aa[0]?.total_duration_min || 0
   return fmtDur(m)
 })
 
 const asleepDur = computed(() => {
   const aa = props.analyses || []
-  const m = mean(aa.map(a => (a.light_sleep_min || 0) + (a.deep_sleep_min || 0) + (a.rem_sleep_min || 0)))
+  // Always sum when multi-session (total actual sleep across all sessions)
+  const m = multi.value
+    ? sum(aa.map(a => (a.light_sleep_min || 0) + (a.deep_sleep_min || 0) + (a.rem_sleep_min || 0)))
+    : sum(aa.map(a => (a.light_sleep_min || 0) + (a.deep_sleep_min || 0) + (a.rem_sleep_min || 0)))
   return fmtDur(m)
 })
 </script>

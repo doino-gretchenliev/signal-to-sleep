@@ -53,13 +53,14 @@
         <button
           v-if="!isPeriodAnalyzed(period.period_id) && analyzing !== period.period_id"
           class="chip-analyze"
+          :disabled="!!analyzing"
           @click.stop="handleAnalyze(period.period_id)"
         >Analyze</button>
         <div v-else-if="analyzing === period.period_id" class="chip-analyzing">
           <span class="analyzing-spinner"></span>
           Analyzing…
         </div>
-        <div v-else class="chip-done-wrap" @click.stop="handleAnalyze(period.period_id)">
+        <div v-else-if="isPeriodAnalyzed(period.period_id)" class="chip-done-wrap" @click.stop="!analyzing && handleAnalyze(period.period_id)">
           <span class="chip-done">Analyzed</span>
           <span class="chip-reanalyze">Re-analyze</span>
         </div>
@@ -78,7 +79,7 @@
       v-if="editingPeriod"
       :period="editingPeriod"
       @close="editingPeriod = null"
-      @saved="handleModalSaved"
+      @saved="handleModalSaved(editingPeriod?.period_id)"
     />
 
     <!-- Delete confirmation overlay -->
@@ -113,8 +114,14 @@ const editingPeriod = ref(null)
 const deleting = ref(false)
 const analyzing = computed(() => composableAnalyzing?.value || null)
 
-const handleModalSaved = async () => {
+const handleModalSaved = async (periodId) => {
   if (reloadPeriods) await reloadPeriods()
+  // Auto-trigger re-analysis when period times are edited
+  if (periodId) {
+    // Clear stale analysis so UI shows "Analyzing..." instead of "Analyzed"
+    if (loadedAnalyses?.value) loadedAnalyses.value.delete(periodId)
+    handleAnalyze(periodId)
+  }
 }
 
 const isSelected = (pid) => {
@@ -367,7 +374,8 @@ const handleDelete = async () => {
   cursor: pointer;
   transition: all 0.2s;
 }
-.chip-analyze:hover { background: rgba(124, 110, 240, 0.25); }
+.chip-analyze:hover:not(:disabled) { background: rgba(124, 110, 240, 0.25); }
+.chip-analyze:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .chip-done-wrap {
   position: relative;

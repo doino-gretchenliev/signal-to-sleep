@@ -22,7 +22,6 @@ Usage:
 
 import os
 import sys
-import ssl
 import json
 import math
 import random
@@ -30,7 +29,6 @@ import time
 import signal
 import argparse
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
@@ -45,12 +43,10 @@ SESSION_ID: str = "continuous-demo"
 
 # MQTT config (same env vars as the backend)
 MQTT_BROKER: str = os.environ.get("MQTT_BROKER", "mosquitto")
-MQTT_PORT: int = int(os.environ.get("MQTT_PORT", "8883"))
+MQTT_PORT: int = int(os.environ.get("MQTT_PORT", "1884"))
 MQTT_TOPIC: str = os.environ.get("MQTT_TOPIC", "sensor-logger")
 MQTT_USERNAME: str = os.environ.get("MQTT_USERNAME", "")
 MQTT_PASSWORD: str = os.environ.get("MQTT_PASSWORD", "")
-MQTT_USE_TLS: bool = os.environ.get("MQTT_USE_TLS", "true").lower() in ("true", "1", "yes")
-MQTT_CA_CERT: str = os.environ.get("MQTT_CA_CERT", "/app/mosquitto/certs/ca.crt")
 
 # Batching: group N samples into one MQTT message to speed up seeding.
 # Keep batches small enough that the backend can ingest each before the next
@@ -79,22 +75,11 @@ def create_mqtt_client() -> mqtt.Client:
     client = mqtt.Client(
         client_id="signal-to-sleep-seeder",
         protocol=mqtt.MQTTv311,
-        transport="tcp",
+        transport="websockets",
     )
 
     if MQTT_USERNAME:
         client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-
-    if MQTT_USE_TLS:
-        ca_cert_path = MQTT_CA_CERT
-        if Path(ca_cert_path).exists():
-            client.tls_set(
-                ca_certs=ca_cert_path,
-                tls_version=ssl.PROTOCOL_TLSv1_2,
-            )
-            client.tls_insecure_set(True)  # self-signed certs
-        else:
-            print(f"  WARNING: CA cert not found at {ca_cert_path}, connecting without TLS")
 
     print(f"  Connecting to MQTT broker at {MQTT_BROKER}:{MQTT_PORT} …")
     client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
